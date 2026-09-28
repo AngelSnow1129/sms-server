@@ -50,6 +50,7 @@ SMSServer/
 ├── store/store.go                   验证码存储抽象层(Store 接口,只定义能力不含实现)
 ├── store/store_test.go              存储契约测试(在 implementations 登记实现即复用全部用例)
 ├── store/sqlite/sqlite_store.go     验证码存储的 SQLite 实现(纯 Go 驱动,软删除保留 10 分钟)
+├── store/mysql/mysql_store.go       验证码存储的 MySQL 实现(与 D1 同为 Unix 秒,多副本共享)
 ├── repository/sms_repo.go           MySQL 仓储层(GORM)
 ├── repository/integration_test.go   MySQL 集成测试(需 -tags=integration)
 ├── model/sms.go                     数据模型(含索引标签)、HMAC 工具函数
@@ -182,6 +183,7 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/v1/otp" -d "{\"token\":\"$TOKEN\"}"
 | `DB_DRIVER` | 否 | `mysql` | — | 持久化后端,可选 `mysql` / `sqlite`。非法值启动失败 |
 | `MYSQL_DSN` | 否 | `user:password@tcp(127.0.0.1:3306)/smsdb?parseTime=true&loc=Local` | — | GORM 连接串,`parseTime=true` 必须保留。仅 `DB_DRIVER=mysql` 时使用 |
 | `SQLITE_PATH` | 否 | `./sms.db` | — | SQLite 库路径。仅 `DB_DRIVER=sqlite` 时使用,存放验证码表 `otps` |
+| `OTP_STORE` | 否 | `auto` | — | 验证码存储后端,可选 `auto` / `memory` / `sqlite` / `mysql`。见下表。非法值启动失败 |
 | `HMAC_SECRET` | **是** | 无 | — | 手机号 HMAC-SHA256 密钥。为空时启动失败 |
 | `WEBHOOK_SECRET` | **是** | 无 | — | webhook 鉴权密钥。为空时启动失败 |
 | `OTP_CACHE_TTL_MINUTES` | 否 | `5` | **分钟** | 验证码有效期。设置为 `5` 即 5 分钟 |
@@ -201,7 +203,29 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/v1/otp" -d "{\"token\":\"$TOKEN\"}"
 
 > `sqlite` 模式下**短信记录不落库**是一个已知的功能缺口:仓储层 `repository.SMSRepository` 依赖 `*gorm.DB` 与 MySQL 方言,纯 Go SQLite 驱动未在本轮接入。若你需要短信原文留存,请用 `mysql` 模式。
 
-SQLite 实现使用纯 Go 驱动 `modernc.org/sqlite`(无 CGO),与 `CGO_ENABLED=0` + distroless 镜像兼容。两种验证码存储实现共用 `store.Store` 接口,由 `store/store_test.go` 的同一组契约用例覆盖。
+SQLite 实现使用纯 Go 驱动 `modernc.org/sqlite`(无 CGO),与 `CGO_ENABLED=0` + distroless 镜像兼容。
+
+### `OTP_STORE`:验证码存在哪里
+
+`DB_DRIVER` 决定**短信记录**存哪里,`OTP_STORE` 决定**验证码**存哪里,二者互相独立、可任意组合(例如短信落 MySQL、验证码落本地 SQLite)。`OTP_STORE` 默认 `auto`,**不设置时行为与引入该变量前完全一致**。
+
+| 取值 | 存储位置 | 重启后验证码 | 多副本共享 | 说明 |
+|---|---|---|---|---|
+| `auto`(默认) | `DB_DRIVER=sqlite` 时用 SQLite,否则用内存 | 视推导结果 | 否 | 保持历史行为 |
+| `memory` | 进程内 map | 丢失 | 否 | 只有一份进程,零依赖 |
+| `sqlite` | `SQLITE_PATH` 文件的 `otps` 表 | 未过期的仍在 | 否 | 单副本自托管,无需数据库 |
+| `mysql` | MySQL 的 `otps` 表 | 未过期的仍在 | **是** | 需要 `DB_DRIVER=mysql`;多副本部署时必须选它 |
+
+`sqlite` 与 `mysql` 两种持久化的行为一致:读取后**软删除**(`status='read'` + 写 `read_at`),保留 10 分钟供对账,再由清理协程物理删除;取码是**原子抢占**,并发下同一条验证码只会被一个调用方取走(MySQL 版已用 50 并发实测命中恒为 1)。
+
+> `OTP_STORE=mysql` 的组合校验:`mysql` 需要 DB_DRIVER 提供的 MySQL 连接,若 `DB_DRIVER=sqlite` 时指定 `OTP_STORE=mysql` 会启动失败并给出明确错误。
+
+三种实现共用 `store.Store` 接口,由 `store/store_test.go` 的同一组契约用例覆盖。MySQL 实现需要真实数据库,用 `-tags=integration` 跑:
+
+```bash
+TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:3306)/smsdb_test?parseTime=true&loc=Local&charset=utf8mb4' \
+  go test -tags=integration -race ./store/...
+```
 
 两个时间变量分别由 `config.getMinutesEnv` / `config.getSecondsEnv` 解析,单位与变量名一致,且非法值(非整数)会回退到默认值。相关行为由 `config/config_test.go` 覆盖。
 

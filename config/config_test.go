@@ -118,6 +118,92 @@ func TestGetMinutesEnvUnitIsMinutes(t *testing.T) {
 	}
 }
 
+// TestLoadOTPStoreDefaultIsAuto 锁定 OTP_STORE 的默认值。
+func TestLoadOTPStoreDefaultIsAuto(t *testing.T) {
+	t.Setenv("OTP_STORE", "")
+
+	if got := Load().OTPStore; got != StoreAuto {
+		t.Errorf("OTPStore = %q，期望 %q", got, StoreAuto)
+	}
+}
+
+// TestResolveOTPStoreAutoKeepsLegacyBehavior 是向后兼容的关键用例：
+// auto 的推导结果必须与引入 OTP_STORE 之前完全一致——
+// DB_DRIVER=sqlite 走 SQLite 文件，其它（含默认 mysql）走内存。
+func TestResolveOTPStoreAutoKeepsLegacyBehavior(t *testing.T) {
+	tests := []struct {
+		name     string
+		driver   string
+		otpStore string
+		want     string
+	}{
+		{"默认 mysql + auto 走内存", DriverMySQL, StoreAuto, StoreMemory},
+		{"sqlite + auto 走 SQLite", DriverSQLite, StoreAuto, StoreSQLite},
+		{"显式 memory 覆盖 auto", DriverSQLite, StoreMemory, StoreMemory},
+		{"显式 sqlite 覆盖 auto", DriverMySQL, StoreSQLite, StoreSQLite},
+		{"显式 mysql 走 MySQL", DriverMySQL, StoreMySQL, StoreMySQL},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{DBDriver: tt.driver, OTPStore: tt.otpStore}
+
+			got, err := cfg.ResolveOTPStore()
+			if err != nil {
+				t.Fatalf("ResolveOTPStore() 返回错误: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("DB_DRIVER=%s OTP_STORE=%s => %q，期望 %q",
+					tt.driver, tt.otpStore, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestResolveOTPStoreRejectsInvalid 验证非法值与不可满足的组合在启动期报错，
+// 而不是静默回落到内存——静默回落会让运维以为验证码已持久化。
+func TestResolveOTPStoreRejectsInvalid(t *testing.T) {
+	tests := []struct {
+		name     string
+		driver   string
+		otpStore string
+	}{
+		{"未知存储实现", DriverMySQL, "redis"},
+		{"空字符串", DriverMySQL, ""},
+		{"mysql 存储但没有 MySQL 连接", DriverSQLite, StoreMySQL},
+		{"mysql 存储但 DB_DRIVER 非法", "postgres", StoreMySQL},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{DBDriver: tt.driver, OTPStore: tt.otpStore}
+			if _, err := cfg.ResolveOTPStore(); err == nil {
+				t.Fatalf("DB_DRIVER=%s OTP_STORE=%q 应报错，实际通过", tt.driver, tt.otpStore)
+			}
+		})
+	}
+}
+
+// TestLoadOTPStoreFromEnv 验证 OTP_STORE 由环境变量注入，并与 DB_DRIVER 解耦：
+// 短信记录后端与验证码后端是两个独立的开关。
+func TestLoadOTPStoreFromEnv(t *testing.T) {
+	t.Setenv("OTP_STORE", StoreMySQL)
+	t.Setenv("DB_DRIVER", DriverMySQL)
+
+	cfg := Load()
+	if cfg.OTPStore != StoreMySQL {
+		t.Fatalf("OTPStore = %q，期望 %q", cfg.OTPStore, StoreMySQL)
+	}
+
+	got, err := cfg.ResolveOTPStore()
+	if err != nil {
+		t.Fatalf("ResolveOTPStore() 返回错误: %v", err)
+	}
+	if got != StoreMySQL {
+		t.Errorf("ResolveOTPStore() = %q，期望 %q", got, StoreMySQL)
+	}
+}
+
 func TestGetEnvFallback(t *testing.T) {
 	t.Setenv("TEST_STR", "")
 	if got := getEnv("TEST_STR", "fallback"); got != "fallback" {

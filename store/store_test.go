@@ -11,7 +11,7 @@ import (
 )
 
 // storeImpl 登记一个待验证的 store.Store 实现及其构造方式。
-// 将来接入 MySQL 实现时，只需在此登记，即可复用下面的全量契约用例。
+// 将来接入新实现（如 MySQL）时，只需在此登记，即可复用下面的全量契约用例。
 //
 // new 不返回 error：Store 接口本身不含错误通道（见 store.go 注释），
 // 构造失败属于接线期问题，在登记处直接 t.Fatalf 即可，不必污染每个用例。
@@ -21,6 +21,15 @@ import (
 type storeImpl struct {
 	name string
 	new  func(t *testing.T, ttl time.Duration) store.Store
+
+	// secondPrecision 表示实现的时间列只到 **Unix 秒**（MySQL 版，与 D1 一致），
+	// 无法表达秒级以下的 TTL，因此依赖毫秒级 TTL 的用例对它跳过。
+	//
+	// 这不是「放宽契约」：秒级精度是 MySQL 版刻意对齐 D1 的选择，
+	// 而毫秒级 TTL（30ms/40ms）是 SQLite 版为了让同一组用例能验证过期语义才引入的
+	// 偏差（见 store/sqlite 的 schema 注释）。契约里除过期相关用例外的全部语义
+	// 对两种精度都适用，因此这里只跳过真正依赖精度的那几条，而不是整个实现。
+	secondPrecision bool
 }
 
 // newSQLiteStore 在 t.TempDir() 下建一个临时库，供单个子用例独占使用。
@@ -43,11 +52,14 @@ func newSQLiteStore(t *testing.T, ttl time.Duration) store.Store {
 	return s
 }
 
-// implementations 当前已接入的存储实现
-var implementations = []storeImpl{
-	{"内存缓存", func(_ *testing.T, ttl time.Duration) store.Store { return cache.NewOTPCache(ttl) }},
-	{"SQLite", newSQLiteStore},
-}
+// implementations 当前已接入的存储实现。
+//
+// mysqlImplementations 由构建标签隔离：MySQL 版需要真实数据库，普通 `go test ./...`
+// 不带 integration 标签时不登记（见同目录下的两个 register 文件）。
+var implementations = append([]storeImpl{
+	{"内存缓存", func(_ *testing.T, ttl time.Duration) store.Store { return cache.NewOTPCache(ttl) }, false},
+	{"SQLite", newSQLiteStore, false},
+}, mysqlImplementations...)
 
 // TestStoreContract 对全部实现跑同一组契约用例，保证切换存储不改变业务语义：
 // 写入/覆盖、阅后即焚、TTL 失效、清理计数与长度统计。
@@ -58,7 +70,11 @@ func TestStoreContract(t *testing.T) {
 			tests := []struct {
 				name string
 				ttl  time.Duration
-				run  func(t *testing.T, s store.Store)
+				// needsMillis 该用例依赖秒级以下的 TTL（30ms/40ms）才能验证过期语义。
+				// 秒级精度的实现（MySQL 版）无法表达这种 TTL，对它跳过——
+				// 理由见 storeImpl.secondPrecision。
+				needsMillis bool
+				run         func(t *testing.T, s store.Store)
 			}{
 				{
 					name: "写入后可读取",
@@ -112,8 +128,9 @@ func TestStoreContract(t *testing.T) {
 					},
 				},
 				{
-					name: "过期后不可读",
-					ttl:  30 * time.Millisecond,
+					name:        "过期后不可读",
+					ttl:         30 * time.Millisecond,
+					needsMillis: true, // 30ms TTL 在秒级列里恒为 0
 					run: func(t *testing.T, s store.Store) {
 						s.Set("token", "123456")
 						time.Sleep(60 * time.Millisecond)
@@ -141,8 +158,9 @@ func TestStoreContract(t *testing.T) {
 					},
 				},
 				{
-					name: "Cleanup 只清理过期项并保留有效项",
-					ttl:  40 * time.Millisecond,
+					name:        "Cleanup 只清理过期项并保留有效项",
+					ttl:         40 * time.Millisecond,
+					needsMillis: true, // 同上：40ms TTL 在秒级列里恒为 0
 					run: func(t *testing.T, s store.Store) {
 						s.Set("expired-1", "111111")
 						s.Set("expired-2", "222222")
@@ -195,6 +213,12 @@ func TestStoreContract(t *testing.T) {
 			for _, tt := range tests {
 				tt := tt
 				t.Run(tt.name, func(t *testing.T) {
+					if tt.needsMillis && impl.secondPrecision {
+						// 跳过的理由是精度而非语义：秒级实现无法表达毫秒级 TTL，
+						// 若让它跑，写进去的记录在任何相位下都会被判为已过期，
+						// 断言的是「TTL 为 0」这个实现细节，而不是业务语义。
+						t.Skipf("%s 的时间列为 Unix 秒，无法表达 %v 级 TTL", impl.name, tt.ttl)
+					}
 					tt.run(t, impl.new(t, tt.ttl))
 				})
 			}

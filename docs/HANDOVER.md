@@ -28,14 +28,42 @@
 | 容器化 | 多阶段构建，`CGO_ENABLED=0` + distroless 非 root |
 | 日志脱敏 | 不记录验证码明文、完整 token、手机号明文 |
 
-### 本轮刚完成（尚未提交）
+### 本轮刚完成
+
+已提交，工作区干净：
 
 - `store.Store` 抽象落地，`service` 不再直接依赖 `cache`
 - `store/sqlite` 实现接入，由 `DB_DRIVER` 选择后端
 - `.gitignore` 补齐（运行时库文件、wrangler 产物、AI 工具目录）
 - 本文档
 
-当前工作区有未提交改动，提交前请复核第 5 节的门禁。
+**但这些提交在 `cloudflare` 分支上，且本地已与 `origin/main` 分叉** —— 见第 2.1 节。合回主干前请勿假设当前代码等于线上将要运行的代码。当前分支改动与上游 smsforward 特性**从未在同一份代码上共存验证过**。
+
+### 2.1 分支现状与上游分叉（重要）
+
+当前在 **`cloudflare` 分支**，与 `origin/main` 已分叉于 `0c77cbe`：
+
+```
+0c77cbe ──┬── 10d7c8e ── 14671cf   (cloudflare, HEAD：本轮改动)
+          └── 2cce4f4 ── 562401b ── df633db   (origin/main：smsforward 特性, PR #1)
+```
+
+| 侧 | 提交 | 内容 |
+|---|---|---|
+| 本地（2 个） | `10d7c8e`、`14671cf` | Cloudflare Workers/D1 形态、`store.Store` 抽象、SQLite 后端、`DB_DRIVER`、文档 |
+| 上游（3 个） | `2cce4f4`、`562401b`、`df633db` | 模板化验证码提取、`smsforward` 通道 webhook、CI 产物上传 |
+
+**两边互不完整**：`main` 上没有 SQLite 后端与 `store` 抽象；本分支没有上游的模板提取与 smsforward 通道。上游新增了 3 个本地没有的文件：`model/smsforward.go`、`model/otp_template.go`、`docs/WIKI_SMSFORWARD_TEMPLATES.md`。
+
+**合并时会冲突的 5 个文件**（精确冲突点见 3.8）：
+
+```
+config/config.go   .env.example   main.go   README.md   service/otp_service.go
+```
+
+合并后**必须重跑第 5 节的完整门禁**：当前分支的门禁通过，只因为它的代码里压根不含上游那批功能——两套功能共存尚未被任何一次验证覆盖过。
+
+> 分叉是并行开发产生的，不是错误。合回前请勿在本分支上直接改上游那批文件，否则冲突面会继续扩大。
 
 ## 3. 架构与关键决策
 
@@ -78,7 +106,25 @@ main → handler → service → {store, repository} → model
 
 SQLite 的软删除是为了解决纯阅后即焚的诊断盲区：调用方说「没收到码」时，还能查到码是否曾写入、何时被取走。Cloudflare 版是同一套语义。
 
-### 3.4 时间精度：SQLite 用毫秒，D1 用秒
+### 3.3b `OTP_STORE`：验证码存储后端（与 `DB_DRIVER` 解耦）
+
+`DB_DRIVER` 决定**短信记录**存哪里，`OTP_STORE` 决定**验证码**存哪里，二者是两条独立的轴、可任意组合。
+
+| 取值 | 位置 | 重启后 | 多副本 | 说明 |
+|---|---|---|---|---|
+| `auto`（默认） | `DB_DRIVER=sqlite` → sqlite，否则 memory | — | 否 | 不设时行为与引入前完全一致 |
+| `memory` | 进程内 map | 丢失 | 否 | 零依赖 |
+| `sqlite` | `SQLITE_PATH` 的 `otps` 表 | 仍在 | 否 | 单副本自托管 |
+| `mysql` | MySQL 的 `otps` 表 | 仍在 | **是** | 需 `DB_DRIVER=mysql`；多副本必选 |
+
+`store/mysql` 与 D1 一致用 **Unix 秒**（SQLite 用毫秒是 3.4 的已知偏离）。两个方言差异导致的必要改动：
+
+1. **取码没有 `UPDATE ... RETURNING`**（那是 SQLite/PG 语法）。MySQL 版改为「条件 UPDATE 抢占 → 判 `RowsAffected()==1` → SELECT 取回」。抢占条件与 SQLite 版的 WHERE 完全相同；`token_hash` 是主键，命中只能是 0 或 1 行。已用 50 并发实测**命中恒为 1**（`store/mysql/concurrency_test.go`，需 `-tags=integration`）。
+2. **`Raw().Scan(&string)` 零行时不返回 `ErrRecordNotFound`**，只留下空串。若按 error 判命中，未命中的 token 会被当成「命中且码为空串」返回 `ok=true`，直接毁掉阅后即焚。故取码统一走 `COUNT` 判定命中（`sqlCountPendingByToken`），见 `pendingCode` 的注释。**这是踩过的坑，改这个文件时不要退回按 error 判断。**
+
+MySQL 实现复用 `main.go` 已建立的 `*gorm.DB`，不拥有连接，**刻意不提供 `Close()`**。
+
+### 3.4 时间精度：SQLite 用毫秒，D1 与 MySQL 用秒
 
 `store/sqlite` 的四个时间列是 Unix **毫秒**，`cloudflare/migrations/0001_init.sql`（D1）是**秒**。这是刻意的偏离：
 
@@ -107,6 +153,30 @@ Go 1.21 的 `net/http.ServeMux` **不支持** `{token}` 通配语法（1.22 才�
 原因是 Deploy to Cloudflare 按钮**只克隆该子目录**，且构建发生在云端、不保证能访问外部 module 代理。所以 `cfvendor/` 必须提交——它不是普通的 vendor 产物，删掉会导致一键部署失败。
 
 `cloudflare/d1sqltest/` 是另一个独立 module（用 `replace ../` 指向父目录），跑针对真实 SQLite 的 SQL 语义实证，同样应当提交。
+
+### 3.8 与上游 smsforward 特性的接口冲突（合并前必读）
+
+本分支与 `origin/main` 改了**同一批函数签名**，且方向相反——不是简单的文本冲突，合并时必须重新接线。这是 2.1 节那 5 个冲突文件的实质内容。
+
+| 位置 | 本分支（HEAD） | 上游 `origin/main` |
+|---|---|---|
+| `NewOTPService` | `(repo, otpStore store.Store, hmacSecret)` | `(repo, cache *cache.OTPCache, hmacSecret, templates []model.OTPTemplate)` |
+| `NewHandler` | `(svc, webhookSecret)` | `(svc, webhookSecret, smsForwardChannels map[string]model.SMSForwardChannel)` |
+| `ProcessIncomingSMS` | `(provider, sender, recipient, body, receivedAt)` | `(provider, sender, recipient, body, channelID, source, receivedAt)` |
+| `handler.NewRouter` | 两条路由 | 多一条 `SMSForwardPathPrefix`（`/api/v1/webhook/smsforward/`） |
+| `config.Config` | 新增 `DBDriver`、`SQLitePath` | 新增 `OTPTemplates`、`SMSForwardChannels` |
+
+**合并时的取法**（两边改动都保留，不要二选一）：
+
+1. `NewOTPService` 取上游的 4 参数版，**把第 2 个参数类型从 `*cache.OTPCache` 改成 `store.Store`** —— 这正是本分支的核心改动，否则抽象层会被合并冲掉。形参名用 `otpStore`
+2. `NewHandler` 直接用上游的 3 参数版（本分支没改它的签名，冲突只来自调用点）
+3. `ProcessIncomingSMS` 用上游的 7 参数版，模板提取逻辑（`extractCodeWithTemplates`）随之生效
+4. `main.go` 的接线要同时满足两边：`newOTPStore(cfg)` 的结果传给 `NewOTPService`，`cfg.OTPTemplates`、`cfg.SMSForwardChannels` 也要传进去
+5. `config.Config` 两组字段都要留（互不冲突，只是同一处结构体）
+
+**合并后必做**：第 5 节门禁全量重跑，并补一次针对新增 `smsforward` 路由的冒烟验证。本分支的 `store` 契约测试（`store/store_test.go`）覆盖不到上游的模板提取路径，两套逻辑的交叉行为目前**没有任何测试覆盖**。
+
+> 已经能预见的语义问题：上游模板提取失败时的回退路径，与本分支 `store` 抽象「写入失败只记日志」的语义叠加后，可能出现「既没提取到码也没报错」的静默场景。合并时建议在 `service` 里明确一条：模板未命中且正则也未命中时，要有一条可观测的日志。
 
 ## 4. 改动前必须知道的坑
 
@@ -198,11 +268,12 @@ MySQL 集成测试需 `-tags=integration` 与真实数据库。
 
 按投入产出排序，都是独立可交付的小改动：
 
-1. **提交本轮改动** —— 工作区还有未提交内容（存储抽象层 + SQLite + 文档）
-2. **健康检查端点** —— 加 `GET /healthz`，改动小、能立刻改善容器编排体验
-3. **写库失败可观测** —— 至少加失败计数与告警日志，目前是静默丢失
-4. **短信原文保留策略** —— 加定期清理或只存必要字段，同时解决合规问题（第 6 节）
-5. **存储抽象上抛错误** —— 按 3.2 的说明做独立的破坏性重构，让 `service` 能感知持久化失败
+1. **把 `cloudflare` 分支合回 `main`** —— 见 2.1 节，这是当前最高优先级：`main` 上没有 SQLite 后端与 `store` 抽象，本分支缺上游的 smsforward 特性，**两边都不完整**。合并需处理 5 个冲突文件（3.8 已列出精确冲突点）
+2. **补全 `sqlite` 模式的短信落库** —— 给仓储层接纯 Go 的 GORM SQLite 驱动，消除 3.3 的能力缺口
+3. **健康检查端点** —— 加 `GET /healthz`，改动小、能立刻改善容器编排体验
+4. **写库失败可观测** —— 至少加失败计数与告警日志，目前是静默丢失
+5. **短信原文保留策略** —— 加定期清理或只存必要字段，同时解决合规问题（第 6 节）
+6. **存储抽象上抛错误** —— 按 3.2 的说明做独立的破坏性重构，让 `service` 能感知持久化失败
 
 不建议的方向：升级 Go 版本（会动摇 3.5 的路由假设）、替换 SQLite 驱动（3.6 已说明约束）。
 

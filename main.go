@@ -17,6 +17,7 @@ import (
 	"smsserver/repository"
 	"smsserver/service"
 	"smsserver/store"
+	mysqlstore "smsserver/store/mysql"
 	"smsserver/store/sqlite"
 
 	"gorm.io/driver/mysql"
@@ -27,14 +28,23 @@ import (
 // 默认 "dev" 使本地 go build 的产物能被明确识别为非正式发布版本。
 var version = "dev"
 
-// newOTPStore 按 DB_DRIVER 选择验证码存储实现，是接线处唯一的分支点：
+// newOTPStore 按 OTP_STORE 选择验证码存储实现，是接线处唯一的分支点：
 // service 只依赖 store.Store，替换实现无需改动业务代码。
 //
+// OTP_STORE 与 DB_DRIVER 解耦：前者决定验证码存哪里，后者决定短信记录存哪里
+// （见 config.Config.ResolveOTPStore）。mysql 分支复用调用方已建立的 *gorm.DB，
+// 不自己建连接——短信记录归档用同一条连接，连接池与生命周期由 main 统一收口。
+//
 // 返回 close 是为了让持久化实现在进程退出前关闭连接（SQLite 需要落盘）。
-// 内存实现返回空函数，调用方无需区分。
-func newOTPStore(cfg *config.Config) (store.Store, func(), error) {
-	switch cfg.DBDriver {
-	case config.DriverSQLite:
+// 内存实现与 MySQL 实现（不拥有连接）返回空函数，调用方无需区分。
+func newOTPStore(cfg *config.Config, db *gorm.DB) (store.Store, func(), error) {
+	impl, err := cfg.ResolveOTPStore()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	switch impl {
+	case config.StoreSQLite:
 		s, err := sqlite.New(cfg.SQLitePath, cfg.OTPCacheTTL)
 		if err != nil {
 			return nil, nil, err
@@ -46,14 +56,25 @@ func newOTPStore(cfg *config.Config) (store.Store, func(), error) {
 			}
 		}, nil
 
-	case config.DriverMySQL:
+	case config.StoreMySQL:
+		s, err := mysqlstore.New(db, cfg.OTPCacheTTL)
+		if err != nil {
+			return nil, nil, fmt.Errorf("初始化 MySQL 验证码存储失败: %w", err)
+		}
+		log.Println("[验证码存储] 实现=MySQL 表=otps")
+		// MySQL 实现复用 main 建立的 *gorm.DB，不拥有连接，无需关闭
+		return s, func() {}, nil
+
+	case config.StoreMemory:
 		// 历史默认：验证码存内存，重启即丢失，与接入 SQLite 前完全一致
 		log.Println("[验证码存储] 实现=内存 重启后验证码丢失")
 		return cache.NewOTPCache(cfg.OTPCacheTTL), func() {}, nil
 
 	default:
-		return nil, nil, fmt.Errorf("DB_DRIVER=%q 非法，可选值为 %s|%s",
-			cfg.DBDriver, config.DriverMySQL, config.DriverSQLite)
+		// ResolveOTPStore 已经过滤了全部非法值，这里是不可达分支，
+		// 留着是为了让「新增实现忘了接线」在编译/阅读时仍然可见。
+		return nil, nil, fmt.Errorf("OTP_STORE=%q 未接线，可选值为 %s|%s|%s",
+			impl, config.StoreMemory, config.StoreSQLite, config.StoreMySQL)
 	}
 }
 
@@ -129,7 +150,7 @@ func main() {
 
 	// 初始化各模块
 	repo := newSMSRepository(cfg, db)
-	otpStore, closeStore, err := newOTPStore(cfg)
+	otpStore, closeStore, err := newOTPStore(cfg, db)
 	if err != nil {
 		log.Fatalf("[验证码存储] 初始化失败: %v", err)
 	}
