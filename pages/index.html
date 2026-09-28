@@ -33,6 +33,7 @@
         <a href="#features">功能特性</a>
         <a href="#steps">使用步骤</a>
         <a href="#tool">取码助手</a>
+        <a href="token.html">token 计算</a>
         <a href="smsforward.html">SMSForward 对接</a>
         <a class="nav-cta" href="docs.html">接口文档</a>
       </nav>
@@ -115,7 +116,7 @@
         <div class="step">
           <div class="step-body">
             <h3>按手机号轮询取码</h3>
-            <p>调用方在本地用同一个 <code>HMAC_SECRET</code> 算出 token，POST 到 <code>/api/v1/otp</code> 即可；命中返回验证码并立即失效。用下方取码助手可以直接生成命令。</p>
+            <p>调用方在本地用同一个 <code>HMAC_SECRET</code> 算出 token，POST 到 <code>/api/v1/otp</code> 即可；命中返回验证码并立即失效。token 是收件人号码 + 密钥的确定性计算结果，不是服务端下发的配置——用下方取码助手或 <a href="token.html">token 计算页</a> 生成命令。</p>
           </div>
         </div>
       </div>
@@ -127,7 +128,7 @@
     <div class="container">
       <div class="section-head">
         <h2>取码助手</h2>
-        <p>在浏览器本地计算 token 并生成可直接复制的命令。密钥与手机号只在当前页面内存中参与计算，本页不发出任何网络请求（Web Crypto 要求 HTTPS 或 localhost）。</p>
+        <p>在浏览器本地计算 token 并生成可直接复制的命令。密钥与手机号只在当前页面内存中参与计算，本页不发出任何网络请求（Web Crypto 要求 HTTPS 或 localhost）。只需要算 token、或想弄清「哪些值要计算、哪些是静态设置」，到 <a href="token.html">token 计算页</a>。</p>
       </div>
 
       <div class="tool card" id="otpTool">
@@ -208,6 +209,7 @@
       <div class="footer-links">
         <a href="https://github.com/AngelSnow1129/WebHookServer" rel="noopener">GitHub 仓库</a>
         <a href="docs.html">接口文档</a>
+        <a href="token.html">token 计算</a>
         <a href="smsforward.html">SMSForward 对接</a>
       </div>
     </div>

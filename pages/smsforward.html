@@ -60,7 +60,7 @@ SMSServer 提取验证码，按收件人号码（= 备用机 SIM 卡号）落缓
       │
       ▼
 你的业务系统用 HMAC(备用机号码) 轮询 /api/v1/otp 取码，取走即焚</code></pre>
-    <p>关键点：<strong>SMSServer 侧的「收件人号码」就是备用机插的那张 SIM 卡的号码</strong>。SmsForwarder 的占位符里没有「本机号码」，所以 <code>recipient</code> 要在模板里写死。</p>
+    <p>关键点：<strong>SMSServer 侧的「收件人号码」就是备用机插的那张 SIM 卡的号码</strong>。SmsForwarder 的占位符里没有「本机号码」，所以 <code>recipient</code> 要在模板里写死。注意这只是「请求体里的固定字段」，不是服务端配置：取码方仍需用<strong>同一个字符串</strong>现算 token（见 <a href="token.html#static-or-compute">token 计算页</a>），模板里写死什么、取码时就算什么，两边逐字符一致才取得到码。</p>
 
     <h2 id="config-generator">配置生成器</h2>
     <p>填写下方参数，直接生成可粘贴进 SmsForwarder 的 webhook 地址与消息模板：</p>
@@ -179,7 +179,7 @@ SMSServer 提取验证码，按收件人号码（= 备用机 SIM 卡号）落缓
     <h3>SmsForwarder 显示 401 unauthorized</h3>
     <p>webhook 地址里的密钥与服务端不一致：检查是否复制完整（<code>openssl rand -hex 32</code> 生成的 64 位十六进制）、URL 是否含多余层级。通用模式路径必须是 <code>.../sms/{WEBHOOK_SECRET}</code>；通道模式是 <code>.../smsforward/{channel_id}/{token}</code>，两者不能混用。</p>
     <h3>webhook 返回 ok 但取码一直 pending</h3>
-    <p>最常见原因是 <strong>recipient 与取码时的号码不一致</strong>：模板里写死的 SIM 号码（如 <code>13900000000</code>）与取码命令里的号码（如 <code>+8613900000000</code>）必须逐字符相同，HMAC 才会对得上。其次是验证码已过期或已被取走（阅后即焚）。</p>
+    <p>最常见原因是 <strong>recipient 与取码时的号码不一致</strong>：模板里写死的 SIM 号码（如 <code>13900000000</code>）与取码命令里的号码（如 <code>+8613900000000</code>）必须逐字符相同，HMAC 才会对得上。其次是验证码已过期或已被取走（阅后即焚）。排查时优先用日志对账：服务端落库成功会打 <code>recipient_hash=xxxxxxxx</code>（前 8 位），与 <a href="token.html">token 计算页</a>算出的 token 前 8 位比对即可锁定是号码还是密钥不一致。</p>
     <h3>取到的码是订单号/金额？</h3>
     <p>通用提取是「第一个 4-8 位数字」的启发式。改用更精确的匹配：转发规则里只放行含「验证码」关键词的短信；或等 PR #1 合入后为通道配置模板提取。</p>
     <h3>双卡手机两个号码怎么区分？</h3>
@@ -206,6 +206,7 @@ SMSServer 提取验证码，按收件人号码（= 备用机 SIM 卡号）落缓
       <div class="footer-links">
         <a href="https://github.com/pppscn/SmsForwarder" rel="noopener">SmsForwarder 项目</a>
         <a href="docs.html">接口文档</a>
+        <a href="token.html">token 计算</a>
         <a href="index.html#tool">取码助手</a>
       </div>
     </div>

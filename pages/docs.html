@@ -29,6 +29,7 @@
       <nav class="nav-links">
         <a href="index.html#features">功能特性</a>
         <a href="index.html#tool">取码助手</a>
+        <a href="token.html">token 计算</a>
         <a href="smsforward.html">SMSForward 对接</a>
         <a class="nav-cta" href="index.html">返回首页</a>
       </nav>
@@ -50,9 +51,13 @@
     <ul>
       <li>消息体就是手机号字符串本身（建议带国家码，如 <code>+8613900000000</code>），不做其他预处理</li>
       <li>输出为小写十六进制（64 字符）</li>
-      <li>可用<a href="index.html#tool">首页取码助手</a>在浏览器本地计算，或用命令行：
+      <li>可用<a href="index.html#tool">首页取码助手</a>或<a href="token.html">token 计算页</a>在浏览器本地计算，或用命令行：
         <pre><code>python3 -c "import hmac,hashlib;print(hmac.new(b'你的HMAC_SECRET',b'+8613900000000',hashlib.sha256).hexdigest())"</code></pre></li>
     </ul>
+    <div class="note">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      <span>token 是<strong>派生值而非配置</strong>：服务端没有「设置取码 token」的动作，它收到 webhook 时用请求体里的 <code>recipient</code> 现算存储 key，收到查询时用你的 token 查表，两边用同一公式各自现算、结果对上即可。<code>recipient</code> 之所以要写进转发模板「写死」，只是因为转发 App 没有「本机号码」占位符，并非它属于服务端配置。完整对照见 <a href="token.html#static-or-compute">token 计算页</a>。</span>
+    </div>
 
     <h2 id="webhook-sms">1. 短信回调</h2>
     <pre><code>POST /api/v1/webhook/sms/{WEBHOOK_SECRET}</code></pre>
@@ -142,7 +147,7 @@
 
     <h2 id="faq">常见问题</h2>
     <h3>取码一直 pending？</h3>
-    <p>按顺序排查：token 是否用同一 <code>HMAC_SECRET</code> 和完全相同的号码字符串计算（空格、大小写、有无 +86 都会导致不一致）；验证码是否已过期或已被取走（阅后即焚，第二次查必 pending）。</p>
+    <p>按顺序排查：token 是否用同一 <code>HMAC_SECRET</code> 和完全相同的号码字符串计算（空格、大小写、有无 +86 都会导致不一致）；验证码是否已过期或已被取走（阅后即焚，第二次查必 pending）。最快的定位手段是对账日志前缀：服务端成功落库时打印 <code>recipient_hash=xxxxxxxx</code>（前 8 位），与 <a href="token.html">token 计算页</a>输出的 token 前 8 位比对，不一致即密钥或号码字符串有一处不同。</p>
     <h3>网页算出的 token 与服务端不一致？</h3>
     <p>用首页助手生成的 python3 对照命令在部署机上再算一次：两者一致说明服务正常，问题出在调用方密钥/号码；不一致说明服务端密钥与浏览器里填的不同。</p>
     <h3>模拟短信返回 401？</h3>
@@ -162,6 +167,7 @@
       <div class="footer-links">
         <a href="https://github.com/AngelSnow1129/WebHookServer" rel="noopener">GitHub 仓库</a>
         <a href="smsforward.html">SMSForward 对接</a>
+        <a href="token.html">token 计算</a>
         <a href="index.html#tool">取码助手</a>
       </div>
     </div>

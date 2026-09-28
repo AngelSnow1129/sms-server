@@ -243,9 +243,64 @@
     syncMode();
   }
 
+  /* ---------- token 计算页（token.html 使用） ---------- */
+
+  function initTokenTool() {
+    var root = document.getElementById('tokenTool');
+    if (!root) return;
+
+    var tRecipient = document.getElementById('tRecipient');
+    var tSecret = document.getElementById('tSecret');
+    var tServer = document.getElementById('tServer');
+    var tResult = document.getElementById('tResult');
+    var tTokenOut = document.getElementById('tTokenOut');
+    var tPrefixOut = document.getElementById('tPrefixOut');
+    var tCurlOut = document.getElementById('tCurlOut');
+    var tPythonOut = document.getElementById('tPythonOut');
+
+    async function compute() {
+      var recipient = tRecipient.value.trim();
+      var secret = tSecret.value.trim();
+      var server = tServer.value.trim().replace(/\/+$/, '');
+
+      if (!recipient) { toast('请先填写收件人号码'); tRecipient.focus(); return; }
+      if (!secret) { toast('请先填写 HMAC_SECRET'); tSecret.focus(); return; }
+      if (!('crypto' in window) || !crypto.subtle) {
+        toast('当前环境不支持 Web Crypto，请改用 HTTPS 或 localhost 访问本页');
+        return;
+      }
+
+      var token;
+      try {
+        token = await hmacSha256Hex(secret, recipient);
+      } catch (err) {
+        toast('HMAC 计算失败：' + err.message);
+        return;
+      }
+
+      tTokenOut.textContent = token;
+      // 前 8 位与日志里的 recipient_hash 一致，作为服务端对账锚点
+      tPrefixOut.textContent = token.slice(0, 8);
+      tCurlOut.textContent = server ? buildOtpCurl(server, token) : '# 填写服务地址后生成';
+      tPythonOut.textContent = buildPythonCheck(secret, recipient);
+
+      tResult.classList.add('show');
+    }
+
+    var computeBtn = document.getElementById('tCompute');
+    if (computeBtn) computeBtn.addEventListener('click', compute);
+    root.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' && ev.target.tagName === 'INPUT') {
+        ev.preventDefault();
+        compute();
+      }
+    });
+  }
+
   function init() {
     initOtpTool();
     initForwardTool();
+    initTokenTool();
   }
 
   if (document.readyState === 'loading') {

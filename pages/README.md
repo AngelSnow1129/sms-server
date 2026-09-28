@@ -7,6 +7,7 @@
 | 页面 | 用途 |
 |---|---|
 | [`index.html`](index.html) | 产品介绍、一键部署入口、**取码助手**（浏览器本地计算 HMAC token 并生成 curl 命令） |
+| [`token.html`](token.html) | **token 计算页**：输入收件人号码 + HMAC_SECRET 本地算 token（含日志前缀对账、取码命令），并解释「哪些值要计算、哪些是静态设置」 |
 | [`docs.html`](docs.html) | 接口文档：token 算法、两个核心接口的请求/响应、部署形态配置对照、FAQ |
 | [`smsforward.html`](smsforward.html) | **SmsForwarder 对接教程**：安卓备用机转发配置、占位符对照表、多通道鉴权、常见问题 |
 | `assets/css/style.css` | 设计令牌与全部样式（主题变量集中在 `:root`） |

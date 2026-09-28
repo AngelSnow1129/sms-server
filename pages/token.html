@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>token 计算 · SMSServer</title>
+  <meta name="description" content="输入收件人号码与 HMAC_SECRET，浏览器本地计算取码 token（HMAC-SHA256 十六进制）。并说明哪些值要计算、哪些值静态设置，附日志前缀对账排查法。" />
+  <meta name="theme-color" content="#2563EB" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%232563EB'/%3E%3Cstop offset='100%25' stop-color='%230EA5E9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='512' height='512' rx='116' fill='url(%23b)'/%3E%3Cpath d='M120 200a40 40 0 0 1 40-40h192a40 40 0 0 1 40 40v84a40 40 0 0 1-40 40H236l-72 56v-56h-4a40 40 0 0 1-40-40z' fill='%23fff' fill-opacity='.92'/%3E%3Crect x='180' y='216' width='152' height='18' rx='9' fill='%232563EB' fill-opacity='.85'/%3E%3Crect x='180' y='254' width='96' height='18' rx='9' fill='%232563EB' fill-opacity='.55'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="assets/css/style.css" />
+</head>
+<body>
+
+  <header class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="index.html">
+        <svg class="brand-logo" viewBox="0 0 512 512" aria-hidden="true">
+          <defs>
+            <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#2563EB"/>
+              <stop offset="100%" stop-color="#0EA5E9"/>
+            </linearGradient>
+          </defs>
+          <rect width="512" height="512" rx="116" fill="url(#lg)"/>
+          <path d="M120 200a40 40 0 0 1 40-40h192a40 40 0 0 1 40 40v84a40 40 0 0 1-40 40H236l-72 56v-56h-4a40 40 0 0 1-40-40z" fill="#fff" fill-opacity=".92"/>
+          <rect x="180" y="216" width="152" height="18" rx="9" fill="#2563EB" fill-opacity=".85"/>
+          <rect x="180" y="254" width="96" height="18" rx="9" fill="#2563EB" fill-opacity=".55"/>
+        </svg>
+        <span>SMSServer</span>
+      </a>
+      <nav class="nav-links">
+        <a href="index.html#features">功能特性</a>
+        <a href="index.html#tool">取码助手</a>
+        <a href="docs.html">接口文档</a>
+        <a href="smsforward.html">SMSForward 对接</a>
+        <a class="nav-cta" href="index.html">返回首页</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="doc">
+    <a class="back" href="index.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      返回首页
+    </a>
+
+    <h1>token 计算</h1>
+    <p class="lead">输入收件人号码与 <code>HMAC_SECRET</code>，在浏览器本地算出取码 token。本页同时解释「哪些值要计算、哪些值静态设置」，并给出与日志对账的排查法。</p>
+
+    <h2 id="tool">计算工具</h2>
+    <p>token 是确定性计算：同样的两个输入永远得到同样的结果，所以不存在「token 过期」或「服务端发放」——算错了重算即可，不用联系服务端。</p>
+
+    <div class="tool card" id="tokenTool">
+      <div class="grid grid-2">
+        <div class="field">
+          <label for="tRecipient">收件人号码 <span class="hint">（必须与 webhook 请求体里的 recipient 逐字节一致，含 +86 前缀）</span></label>
+          <input class="input" id="tRecipient" type="text" placeholder="+8613900000000" spellcheck="false" />
+        </div>
+        <div class="field">
+          <label for="tSecret">HMAC_SECRET <span class="hint">（部署时填写的那个）</span></label>
+          <input class="input" id="tSecret" type="password" placeholder="openssl rand -hex 32 生成的密钥" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="field" style="grid-column:1/-1;">
+          <label for="tServer">服务地址 <span class="hint">（可选，填写后同时生成取码命令）</span></label>
+          <input class="input" id="tServer" type="text" placeholder="https://sms-server.xxx.workers.dev" spellcheck="false" />
+        </div>
+      </div>
+
+      <div class="tool-actions">
+        <button class="btn btn-primary" type="button" id="tCompute">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+          计算 token
+        </button>
+      </div>
+
+      <div class="result" id="tResult">
+        <div class="label">取码 token = hex(HMAC-SHA256(key=HMAC_SECRET, msg=收件人号码))</div>
+        <div class="link-preview">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          <span id="tTokenOut">填写上方配置后在此显示。</span>
+        </div>
+        <button class="btn btn-ghost" type="button" data-copy-target="tTokenOut" data-ok-msg="token 已复制">复制 token</button>
+
+        <div class="label">日志对账前缀（token 前 8 位）</div>
+        <div class="link-preview">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+          <span id="tPrefixOut">—</span>
+        </div>
+        <p style="margin:8px 0 0;color:var(--muted);font-size:13.5px;">服务端成功写入验证码时打日志 <code>[短信] 处理完成 recipient_hash=xxxxxxxx</code>，这个 <code>xxxxxxxx</code> 就是 token 的前 8 位。两边一致，说明密钥与号码一定对上了；不一致才需要继续往下查。</p>
+        <button class="btn btn-ghost" type="button" data-copy-target="tPrefixOut">复制前缀</button>
+
+        <div class="label">取码（命中即焚，第二次查询为 pending）</div>
+        <pre><code id="tCurlOut"># 填写服务地址后生成</code></pre>
+        <button class="btn btn-ghost" type="button" data-copy-target="tCurlOut">复制命令</button>
+
+        <div class="label">python3 对照验证（与上方 token 应完全一致）</div>
+        <pre><code id="tPythonOut"># 填写上方配置后生成</code></pre>
+        <button class="btn btn-ghost" type="button" data-copy-target="tPythonOut">复制命令</button>
+
+        <div class="gen-note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          <span>计算只发生在当前页面内存中，本页不发出任何网络请求（Web Crypto 要求 HTTPS 或 localhost，<code>file://</code> 直接打开时不可用）。</span>
+        </div>
+      </div>
+    </div>
+
+    <h2 id="static-or-compute">要计算，还是静态设置？</h2>
+    <p>文档里会看到「recipient 要在模板里<strong>写死</strong>」和「调用方<strong>算出</strong> token」两种说法，容易混。它们其实指的是三个不同的东西：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>值</th><th>本质</th><th>谁在哪设置</th><th>改的时候怎么办</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>WEBHOOK_SECRET</code></td>
+            <td>静态密钥</td>
+            <td>你，部署时一次性配置；短信来源方把它拼在 webhook URL 里</td>
+            <td>轮换后来源方必须同步改 URL，旧 URL 立即 401</td>
+          </tr>
+          <tr>
+            <td><code>HMAC_SECRET</code></td>
+            <td>静态密钥</td>
+            <td>你，部署时一次性配置；取码方本地持有</td>
+            <td>轮换后所有在途验证码对取码方立即不可见，取码方必须用新密钥重算</td>
+          </tr>
+          <tr>
+            <td><code>recipient</code></td>
+            <td>请求体里的固定字段</td>
+            <td>来源方写进转发模板（SmsForwarder 没有「本机号码」占位符，只能手工填 SIM 卡号）；取码方查询时用同一字符串</td>
+            <td>换 SIM 卡号时，模板与取码命令两处必须同步改</td>
+          </tr>
+          <tr>
+            <td>取码 <code>token</code></td>
+            <td><strong>派生值，不是配置</strong></td>
+            <td>取码方在发起查询时用 recipient + HMAC_SECRET 现算（本页或首页取码助手）</td>
+            <td>输入不变则结果永不变，无需任何「设置」动作</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <span>服务端<strong>没有「设置取码 token」这回事</strong>。服务端不保存任何 token 表：收到 webhook 时用请求体里的 <code>recipient</code> 现算存储 key，收到查询时用你算的 <code>token</code> 查表。两边不是「一个设置、一个读取」，而是<strong>用同一个公式各自现算、结果自然对上</strong>。这也是取码接口不需要任何密钥头的原因——token 本身就是凭据。</span>
+    </div>
+
+    <h2 id="troubleshoot">对不上时怎么排查</h2>
+    <ol>
+      <li><strong>先比前 8 位</strong>：让短信真正到达一次（webhook 返回 <code>{"status":"ok"}</code> 且 body 里有 4-8 位数字），在 Workers 日志或 <code>wrangler tail</code> 里找 <code>[短信] 处理完成 recipient_hash=xxxxxxxx</code>，与上方工具算出的 token 前 8 位比对。不一致 = 密钥或号码字符串有一处不同（空格、有无 +86、用了 sender 而非 recipient 算的都会导致）。</li>
+      <li><strong>本地交叉验证密钥</strong>：复制上方「python3 对照验证」命令在你自己机器上跑一遍，与工具输出不一致说明两处 HMAC_SECRET 抄录不同。</li>
+      <li><strong>webhook 返回 400 <code>invalid json</code></strong>：多半是 Windows cmd 把单引号原样发出去了（cmd 不认单引号定界符）。body 存成 UTF-8 文件后用 <code>curl -d @body.json</code>，或改用双引号转义写法。</li>
+      <li><strong>取码一直 pending</strong>：按顺序排除——token 没对上（回到第 1 步）；码已被之前的查询取走（阅后即焚，重发一条短信再试）；短信 body 里根本没有 4-8 位数字（webhook 会照样返回 ok 但不落库）；超过有效期（<code>OTP_TTL_SECONDS</code>）。</li>
+    </ol>
+    <p>需要看字段级说明与完整响应表，见 <a href="docs.html#token-algorithm">接口文档 · token 计算方式</a>；安卓备用机转发场景见 <a href="smsforward.html">SMSForward 对接教程</a>。</p>
+  </div>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <svg class="brand-logo" viewBox="0 0 512 512" aria-hidden="true">
+          <rect width="512" height="512" rx="116" fill="url(#lg)"/>
+          <path d="M120 200a40 40 0 0 1 40-40h192a40 40 0 0 1 40 40v84a40 40 0 0 1-40 40H236l-72 56v-56h-4a40 40 0 0 1-40-40z" fill="#fff" fill-opacity=".92"/>
+        </svg>
+        <span>SMSServer</span>
+      </div>
+      <div class="footer-meta">验证码中继 · 阅后即焚 · Go 1.21</div>
+      <div class="footer-links">
+        <a href="https://github.com/AngelSnow1129/WebHookServer" rel="noopener">GitHub 仓库</a>
+        <a href="docs.html">接口文档</a>
+        <a href="smsforward.html">SMSForward 对接</a>
+      </div>
+    </div>
+  </footer>
+
+  <div class="toast" role="status"></div>
+  <script src="assets/js/tool.js"></script>
+</body>
+</html>
