@@ -21,9 +21,15 @@ const WebhookPathPrefix = "/api/v1/webhook/sms/"
 // MaxBodyBytes 请求体上限，防止未鉴权接口被超大 body 拖垮
 const MaxBodyBytes = 64 << 10 // 64 KiB
 
-// ReadRetentionSeconds 已读记录保留时长，超过后由 Cron 物理删除。
-// 保留窗口用于对账「调用方说没收到码」，避免阅后即焚造成的诊断盲区。
-const ReadRetentionSeconds = 600 // 10 分钟
+// FailureCode 提取失败时落库到 code 列的标记值。
+// 用户取码时若看到该值，说明最近一条短信未能提取出验证码（正文里没有 4-8 位数字）；
+// 该记录不会被任何清理任务删除（清理只针对 status='read'），同号新短信到达时按 upsert 覆盖。
+const FailureCode = "Failures"
+
+// ReadArchiveWindowSeconds 已消费（read）记录的物理清理窗口，超过后由每月一次的
+// Cron 批量删除。未读（pending）与失败（failed）记录不受影响，严禁自动删除。
+// 窗口取 30 天：已消费记录本就允许累积，低频清理即可控量。
+const ReadArchiveWindowSeconds = 30 * 24 * 3600 // 30 天
 
 // TokenLogPrefixLen 日志中记录的 token 前缀长度（与自托管版一致，详见 docs/LOGGING.md）
 const TokenLogPrefixLen = 8

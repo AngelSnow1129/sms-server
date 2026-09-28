@@ -18,17 +18,20 @@ func TestTakeCodeAtomicOnce(t *testing.T) {
 	db := newDB(t)
 	ctx := context.Background()
 
-	if err := otp.SaveOTP(ctx, db, "h1", "123456", 1000, 1300); err != nil {
+	if err := otp.SaveOTP(ctx, db, "h1", "123456", "验证码123456", 1000, 1300); err != nil {
 		t.Fatalf("SaveOTP: %v", err)
 	}
 
-	// 第一次：拿到验证码，行被翻成 read
-	code, err := otp.TakeCode(ctx, db, "h1", 1100)
+	// 第一次：拿到验证码与原文，行被翻成 read
+	taken, err := otp.TakeCode(ctx, db, "h1", 1100)
 	if err != nil {
 		t.Fatalf("首次 TakeCode 失败：%v", err)
 	}
-	if code != "123456" {
-		t.Fatalf("首次 TakeCode = %q，期望 %q", code, "123456")
+	if taken.Code != "123456" {
+		t.Fatalf("首次 TakeCode = %q，期望 %q", taken.Code, "123456")
+	}
+	if taken.RawContent != "验证码123456" {
+		t.Errorf("首次 TakeCode 原文 = %q，期望完整短信原文", taken.RawContent)
 	}
 
 	r := fetch(t, db, "h1")
@@ -42,16 +45,19 @@ func TestTakeCodeAtomicOnce(t *testing.T) {
 		t.Errorf("取码后 updated_at = %d，期望 1100", r.updatedAt)
 	}
 	if r.code != "123456" {
-		t.Errorf("软删除记录仍应保留验证码明文以供对账，实际 code = %q", r.code)
+		t.Errorf("已消费记录仍应保留验证码明文以供对账，实际 code = %q", r.code)
+	}
+	if r.rawContent != "验证码123456" {
+		t.Errorf("已消费记录仍应保留短信原文，实际 raw_content = %q", r.rawContent)
 	}
 
 	// 第二次：已无 pending 行 → sql.ErrNoRows
-	code, err = otp.TakeCode(ctx, db, "h1", 1100)
+	taken, err = otp.TakeCode(ctx, db, "h1", 1100)
 	if !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("第二次 TakeCode err = %v (code=%q)，期望 sql.ErrNoRows", err, code)
+		t.Fatalf("第二次 TakeCode err = %v (code=%q)，期望 sql.ErrNoRows", err, taken.Code)
 	}
-	if code != "" {
-		t.Errorf("第二次 TakeCode 返回 code = %q，期望空串", code)
+	if taken.Code != "" {
+		t.Errorf("第二次 TakeCode 返回 code = %q，期望空串", taken.Code)
 	}
 }
 
@@ -59,29 +65,15 @@ func TestTakeCodeAtomicOnce(t *testing.T) {
 func TestTakeCodeUnknownToken(t *testing.T) {
 	db := newDB(t)
 
-	code, err := otp.TakeCode(context.Background(), db, "never-written", 1000)
+	taken, err := otp.TakeCode(context.Background(), db, "never-written", 1000)
 	if !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("未知 token err = %v (code=%q)，期望 sql.ErrNoRows", err, code)
+		t.Fatalf("未知 token err = %v (code=%q)，期望 sql.ErrNoRows", err, taken.Code)
 	}
 }
 
-// TestTakeCodeExpired 未读但已过期（expires_at <= now）取码应失败，且行保持 pending（由 Cron 清理）。
-func TestTakeCodeExpired(t *testing.T) {
-	db := newDB(t)
-	ctx := context.Background()
-
-	if err := otp.SaveOTP(ctx, db, "h1", "123456", 1000, 1100); err != nil {
-		t.Fatalf("SaveOTP: %v", err)
-	}
-
-	// 边界：expires_at == now 视为过期（WHERE 用的是 expires_at > ?1）
-	if _, err := otp.TakeCode(ctx, db, "h1", 1100); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("expires_at == now 时 err = %v，期望 sql.ErrNoRows", err)
-	}
-	if r := fetch(t, db, "h1"); r.status != "pending" {
-		t.Errorf("过期取码后 status = %q，期望保持 pending", r.status)
-	}
-}
+// 说明：旧语义「未读但已过期（expires_at <= now）取码失败」已被留存需求明确推翻——
+// 未读验证码严禁自动删除或过期失效，expires_at 降级为信息字段。
+// 新行为（过期一年仍可取）由 save_otp_test.go 的 TestSaveOTPExpiredRowStillRetrievable 实证。
 
 // TestTakeCodeConcurrentExactlyOneWinner 并发实证：N 个 goroutine 同时取同一个 token，
 // 恰好一个成功，其余全部 sql.ErrNoRows。这是「单条语句原子性」的直接证据。
@@ -90,7 +82,7 @@ func TestTakeCodeConcurrentExactlyOneWinner(t *testing.T) {
 	db := newDB(t)
 	ctx := context.Background()
 
-	if err := otp.SaveOTP(ctx, db, "hot", "999999", 1000, 9_999_999_999); err != nil {
+	if err := otp.SaveOTP(ctx, db, "hot", "999999", "验证码999999", 1000, 9_999_999_999); err != nil {
 		t.Fatalf("SaveOTP: %v", err)
 	}
 
@@ -107,12 +99,12 @@ func TestTakeCodeConcurrentExactlyOneWinner(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start // 尽量同时发起，放大竞态窗口
-			code, err := otp.TakeCode(ctx, db, "hot", 1100)
+			taken, err := otp.TakeCode(ctx, db, "hot", 1100)
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
 			case err == nil:
-				winners = append(winners, code)
+				winners = append(winners, taken.Code)
 			case errors.Is(err, sql.ErrNoRows):
 				noRows++
 			default:
@@ -149,7 +141,7 @@ func TestTakeCodeConcurrentMultiConnExactlyOneWinner(t *testing.T) {
 	db := newConcurrentDB(t, 8)
 	ctx := context.Background()
 
-	if err := otp.SaveOTP(ctx, db, "hot", "888888", 1000, 9_999_999_999); err != nil {
+	if err := otp.SaveOTP(ctx, db, "hot", "888888", "验证码888888", 1000, 9_999_999_999); err != nil {
 		t.Fatalf("SaveOTP: %v", err)
 	}
 
@@ -166,12 +158,12 @@ func TestTakeCodeConcurrentMultiConnExactlyOneWinner(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			code, err := otp.TakeCode(ctx, db, "hot", 1100)
+			taken, err := otp.TakeCode(ctx, db, "hot", 1100)
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
 			case err == nil:
-				winners = append(winners, code)
+				winners = append(winners, taken.Code)
 			case errors.Is(err, sql.ErrNoRows):
 				noRows++
 			default:
@@ -208,7 +200,7 @@ func TestTakeCodeConcurrentDistinctTokensNoCrossTalk(t *testing.T) {
 		tok := fmt.Sprintf("h%02d", i)
 		code := fmt.Sprintf("%06d", 100000+i)
 		want[tok] = code
-		if err := otp.SaveOTP(ctx, db, tok, code, 1000, 9_999_999_999); err != nil {
+		if err := otp.SaveOTP(ctx, db, tok, code, "验证码"+code, 1000, 9_999_999_999); err != nil {
 			t.Fatalf("SaveOTP: %v", err)
 		}
 	}
@@ -227,14 +219,14 @@ func TestTakeCodeConcurrentDistinctTokensNoCrossTalk(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-startCh
-				code, err := otp.TakeCode(ctx, db, tok, 1100)
+				taken, err := otp.TakeCode(ctx, db, tok, 1100)
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
 				case err == nil:
 					wins[tok]++
-					if code != want[tok] {
-						other = append(other, fmt.Errorf("%s 取到 %q，期望 %q", tok, code, want[tok]))
+					if taken.Code != want[tok] {
+						other = append(other, fmt.Errorf("%s 取到 %q，期望 %q", tok, taken.Code, want[tok]))
 					}
 				case errors.Is(err, sql.ErrNoRows):
 				default:
@@ -265,7 +257,7 @@ func TestTakeCodeDistinctTokensDoNotInterfere(t *testing.T) {
 	ctx := context.Background()
 
 	for i, c := range []string{"1111", "2222", "3333"} {
-		if err := otp.SaveOTP(ctx, db, fmt.Sprintf("h%d", i), c, 1000, 9_999_999_999); err != nil {
+		if err := otp.SaveOTP(ctx, db, fmt.Sprintf("h%d", i), c, "验证码"+c, 1000, 9_999_999_999); err != nil {
 			t.Fatalf("SaveOTP: %v", err)
 		}
 	}
@@ -274,12 +266,55 @@ func TestTakeCodeDistinctTokensDoNotInterfere(t *testing.T) {
 		t.Fatalf("TakeCode(h1): %v", err)
 	}
 	for _, tc := range []struct{ token, want string }{{"h0", "1111"}, {"h2", "3333"}} {
-		code, err := otp.TakeCode(ctx, db, tc.token, 1100)
-		if err != nil || code != tc.want {
-			t.Errorf("TakeCode(%s) = (%q, %v)，期望 (%q, nil)", tc.token, code, err, tc.want)
+		taken, err := otp.TakeCode(ctx, db, tc.token, 1100)
+		if err != nil || taken.Code != tc.want {
+			t.Errorf("TakeCode(%s) = (%q, %v)，期望 (%q, nil)", tc.token, taken.Code, err, tc.want)
 		}
 	}
 	if _, err := otp.TakeCode(ctx, db, "h1", 1100); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("已取走的 h1 再次取码 err = %v，期望 sql.ErrNoRows", err)
+	}
+}
+
+// TestLookupState 实证取码未命中时的状态查询：区分从未写入 / 已消费 / 提取失败。
+// failed 行的标记与原文必须可见（对应 /api/v1/otp 的 status=failures 响应）。
+func TestLookupState(t *testing.T) {
+	db := newDB(t)
+	ctx := context.Background()
+
+	// 从未写入：Found=false，无错误
+	s, err := otp.LookupState(ctx, db, "ghost")
+	if err != nil {
+		t.Fatalf("LookupState(ghost): %v", err)
+	}
+	if s.Found {
+		t.Errorf("未写入 token 应 Found=false")
+	}
+
+	// 已消费
+	if err := otp.SaveOTP(ctx, db, "h1", "123456", "验证码123456", 1000, 1300); err != nil {
+		t.Fatalf("SaveOTP: %v", err)
+	}
+	if _, err := otp.TakeCode(ctx, db, "h1", 1100); err != nil {
+		t.Fatalf("TakeCode: %v", err)
+	}
+	s, err = otp.LookupState(ctx, db, "h1")
+	if err != nil || !s.Found || s.Status != "read" || s.Code != "123456" {
+		t.Errorf("LookupState(h1) = (%+v, %v)，期望 (read, 123456)", s, err)
+	}
+
+	// 提取失败
+	if err := otp.SaveFailure(ctx, db, "h2", "今日天气晴，无验证码。", 2000); err != nil {
+		t.Fatalf("SaveFailure: %v", err)
+	}
+	s, err = otp.LookupState(ctx, db, "h2")
+	if err != nil || !s.Found || s.Status != "failed" {
+		t.Fatalf("LookupState(h2) = (%+v, %v)，期望 status=failed", s, err)
+	}
+	if s.Code != otp.FailureCode {
+		t.Errorf("失败行 code = %q，期望 %q", s.Code, otp.FailureCode)
+	}
+	if s.RawContent != "今日天气晴，无验证码。" {
+		t.Errorf("失败行原文 = %q，期望完整短信原文", s.RawContent)
 	}
 }

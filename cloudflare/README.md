@@ -42,9 +42,12 @@ curl -s -X POST "https://sms-server.<你的子域>.workers.dev/api/v1/webhook/sm
 
 # 取码（TOKEN = HMAC-SHA256(收件人号码, HMAC_SECRET) 的十六进制，算法与自托管版一致）
 curl -s -X POST "https://sms-server.<你的子域>.workers.dev/api/v1/otp" -d "{\"token\":\"$TOKEN\"}"
-# → {"status":"success","code":"123456"}
+# → {"status":"success","code":"123456","raw_content":"【某某】您的验证码是123456，5分钟内有效。"}
 
-# 再查一次 → {"status":"pending"}（阅后即焚）
+# 再查一次 → {"status":"pending"}（阅后即焚，只被消费才失效）
+
+# 若最近一条短信提取不到验证码 → {"status":"failures","code":"Failures","raw_content":"<短信原文>","reason":"..."}
+# （失败记录长期保留，同号新短信到达后自动覆盖）
 ```
 
 ## 接口（与自托管版协议一致）
@@ -53,16 +56,17 @@ curl -s -X POST "https://sms-server.<你的子域>.workers.dev/api/v1/otp" -d "{
 
 | 接口 | 行为 |
 |---|---|
-| `POST /api/v1/webhook/sms/{WEBHOOK_SECRET}` | 提取验证码写入 D1；同号新码覆盖旧码；未提取到验证码不写入 |
-| `POST /api/v1/otp` `{"token":"<HMAC hex>"}` | 命中即原子标记已读并返回 `success`，否则 `pending` |
+| `POST /api/v1/webhook/sms/{WEBHOOK_SECRET}` | 提取验证码连同短信原文（`raw_content`，完整保留不截断）写入 D1；同号新码覆盖旧码；提取不到验证码时落失败标记（`status='failed'`、`code='Failures'`） |
+| `POST /api/v1/otp` `{"token":"<HMAC hex>"}` | 命中即原子标记已读，返回 `success` + `code` + `raw_content`；最近一条提取失败时返回 `failures` + 原文 + 原因；其余（从未写入 / 已被消费）返回 `pending` |
 
-**读取原子性**：取码是单条 `UPDATE ... RETURNING code`（`status='pending'` → `'read'` 并写 `read_at`），并发下不可能两个请求同时把同一个码从 `pending` 翻成 `read`。
+**读取原子性**：取码是单条 `UPDATE ... RETURNING code, raw_content`（`status='pending'` → `'read'` 并写 `read_at`），并发下不可能两个请求同时把同一个码从 `pending` 翻成 `read`。
 
-**删除策略**（解决纯阅后即焚无法对账的问题）：
+**留存策略**（需求驱动，与自托管版的关键差异）：
 
-- 读取成功 → 立即失效（第二次查询必为 `pending`），记录**软删除**（`status='read'` + `read_at`）保留 10 分钟供排查「调用方说没收到码」
-- Cron 每 30 分钟物理清理：已读超 10 分钟的记录 + 未读但已过期的记录
-- 数据因此不无限积累，D1 存储（免费 5 GB）与写额度（免费 10 万行/天）远够用
+- **原文完整保留**：`raw_content` 存短信原文（`req.Body` 原样，严禁清洗截断），取码成功与失败标记查询都会返回
+- **失败可见**：提取不到验证码不静默丢弃，落 `failed` 标记行，用户查询即见 `status=failures` 与原文；该记录永不被清理删除，同号新短信按 upsert 覆盖
+- **未读严禁删除**：`pending` 验证码属于关键有效数据，不自动删除、不自动过期失效（`expires_at` 降级为信息字段，仅记录建议有效期）；失效途径只有两条——被消费、或被同号新码覆盖
+- **已消费低频清理**：`read` 记录允许累积，每月 1 日 03:00（UTC）Cron 批量物理清理超出 30 天窗口的记录
 
 ## 免费额度参考（Workers Free，每日 UTC 重置）
 

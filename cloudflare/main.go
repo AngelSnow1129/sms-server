@@ -4,8 +4,11 @@
 // SMSServer Cloudflare 版入口：Workers + D1。
 //
 // 与自托管版的关键差异：Workers 实例间不共享内存，D1 是唯一事实源。
-// 验证码写入 D1（同号新码覆盖旧码）；读取用单条 UPDATE ... RETURNING 原子地把
-// pending 翻成 read 并返回验证码，记录软删除保留 10 分钟供对账，由 Cron 定期物理清理。
+// 验证码连同短信原文（raw_content，完整保留、不清洗不截断）写入 D1，同号新码覆盖旧码；
+// 提取失败也落库为失败标记（code=Failures、status=failed），永不被清理删除，同号新短信按 upsert 覆盖；
+// 读取用单条 UPDATE ... RETURNING 原子地把 pending 翻成 read，连同原文返回验证码。
+// 未读（pending）验证码属于关键有效数据，严禁自动删除或过期失效（expires_at 仅保留为信息字段）；
+// 已消费（read）记录允许累积，仅由每月一次的 Cron 批量物理清理超出窗口的部分。
 package main
 
 import (
@@ -32,10 +35,9 @@ import (
 // 运行常量与纯逻辑集中在 otp 包（不依赖 Workers 运行时，可在 linux/amd64 下单测）。
 // 这里做别名转发，保持本文件内部写法不变。
 const (
-	webhookPathPrefix    = otp.WebhookPathPrefix
-	maxBodyBytes         = otp.MaxBodyBytes
-	readRetentionSeconds = otp.ReadRetentionSeconds
-	tokenLogPrefixLen    = otp.TokenLogPrefixLen
+	webhookPathPrefix = otp.WebhookPathPrefix
+	maxBodyBytes      = otp.MaxBodyBytes
+	tokenLogPrefixLen = otp.TokenLogPrefixLen
 )
 
 // defaultOTPTTL 验证码默认有效期（OTP_TTL_SECONDS 未配置或非法时）
@@ -100,7 +102,7 @@ func main() {
 	// 每个事件都有独立的 Wasm 实例（worker.mjs 每次 new WebAssembly.Instance + go.run），
 	// 所以 main 何时返回不会影响后续事件。
 	workers.ServeNonBlock(routes(h))
-	cron.ScheduleTaskNonBlock(h.cleanupExpired)
+	cron.ScheduleTaskNonBlock(h.cleanupReadArchive)
 	workers.Ready()
 
 	select {
@@ -168,21 +170,25 @@ func (h *handler) WebhookSMS(w http.ResponseWriter, r *http.Request) {
 
 	// 验证码提取逻辑见 otp.ExtractCode（无 Workers 运行时依赖，可单测）
 	code := otp.ExtractCode(req.Body)
-	if code == "" {
-		// 未提取到验证码：不写入 D1，该号码的旧码保持原状（与自托管版一致）
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-		return
-	}
-
 	tokenHash := model.HMACPhoneNumber(req.Recipient, cfg.hmacSecret)
-	if err := h.saveOTP(r.Context(), tokenHash, code, cfg.otpTTL); err != nil {
-		log.Printf("[数据库] 写入失败 recipient_hash=%s err=%v", tokenHash[:tokenLogPrefixLen], err)
+
+	var storeErr error
+	if code == "" {
+		// 提取失败也必须落库：把该号码行标为 failed（code 存 FailureCode 标记），
+		// 用户取码时看到 status=failures 与短信原文，而不是一个无法区分的 pending。
+		// failed 记录永不被清理任务删除，同号新短信到达时按 upsert 覆盖。
+		storeErr = h.saveFailure(r.Context(), tokenHash, req.Body)
+	} else {
+		storeErr = h.saveOTP(r.Context(), tokenHash, code, req.Body, cfg.otpTTL)
+	}
+	if storeErr != nil {
+		log.Printf("[数据库] 写入失败 recipient_hash=%s err=%v", tokenHash[:tokenLogPrefixLen], storeErr)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	// 注意：禁止记录验证码明文与完整 token（详见根目录 docs/LOGGING.md）
-	log.Printf("[短信] 处理完成 recipient_hash=%s 提取到验证码=true", tokenHash[:tokenLogPrefixLen])
+	log.Printf("[短信] 处理完成 recipient_hash=%s 提取到验证码=%v", tokenHash[:tokenLogPrefixLen], code != "")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -216,39 +222,63 @@ func (h *handler) GetOTP(w http.ResponseWriter, r *http.Request) {
 
 	// 单条 UPDATE ... RETURNING 由存储层保证原子性：并发下只有一个请求能把同一
 	// token 翻成 read，其余请求得到 sql.ErrNoRows。见 otp.TakeCode。
-	code, err := otp.TakeCode(r.Context(), h.db, req.Token, time.Now().Unix())
-
-	resp := model.OTPResponse{Status: "pending"}
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		// 未写入 / 已过期 / 已被取走，语义与自托管版一致
-	case err != nil:
+	taken, err := otp.TakeCode(r.Context(), h.db, req.Token, time.Now().Unix())
+	if err == nil {
+		resp := model.OTPResponse{Status: "success"}
+		resp.Code = &taken.Code
+		resp.RawContent = &taken.RawContent
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		log.Printf("[数据库] 取码失败 err=%v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
-	default:
-		resp.Status = "success"
-		resp.Code = &code
+	}
+
+	// 未命中：再查一次行状态，把「提取失败」显式暴露给用户（status=failures + 原文），
+	// 其余情况（从未写入 / 已被消费）统一 pending。
+	state, err := otp.LookupState(r.Context(), h.db, req.Token)
+	if err != nil {
+		log.Printf("[数据库] 状态查询失败 err=%v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	resp := model.OTPResponse{Status: "pending"}
+	if state.Status == "failed" {
+		resp.Status = "failures"
+		resp.Code = &state.Code
+		resp.RawContent = &state.RawContent
+		reason := "最近一条短信未提取到 4-8 位数字验证码，原文已附；该记录长期保留，同号新短信到达后自动覆盖"
+		resp.Reason = &reason
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
 // saveOTP 写入验证码，同号新码直接覆盖旧码（upsert，与自托管版缓存覆盖语义一致）。
-// otpTTL 由调用方按当前请求的配置传入；SQL 与封装见 otp.SaveOTP。
-func (h *handler) saveOTP(ctx context.Context, tokenHash, code string, otpTTL time.Duration) error {
+// rawContent 必须原样传入：raw_content 完整保存短信原文，严禁清洗截断。
+// otpTTL 由调用方按当前请求的配置传入，仅作为信息字段写入（建议有效期），
+// 取码与清理均不以它为准；SQL 与封装见 otp.SaveOTP。
+func (h *handler) saveOTP(ctx context.Context, tokenHash, code, rawContent string, otpTTL time.Duration) error {
 	now := time.Now().Unix()
-	return otp.SaveOTP(ctx, h.db, tokenHash, code, now, now+int64(otpTTL/time.Second))
+	return otp.SaveOTP(ctx, h.db, tokenHash, code, rawContent, now, now+int64(otpTTL/time.Second))
 }
 
-// cleanupExpired Cron 任务（每 30 分钟，见 wrangler.jsonc）：
-// 清理已读超过保留窗口的记录与未读但已过期的记录，保证数据不无限积累。
-// SQL 与封装见 otp.CleanupExpired。
-func (h *handler) cleanupExpired(ctx context.Context) error {
-	nRead, nExpired, err := otp.CleanupExpired(ctx, h.db, time.Now().Unix())
+// saveFailure 写入提取失败标记（upsert）。详见 otp.SaveFailure 注释。
+func (h *handler) saveFailure(ctx context.Context, tokenHash, rawContent string) error {
+	return otp.SaveFailure(ctx, h.db, tokenHash, rawContent, time.Now().Unix())
+}
+
+// cleanupReadArchive 每月一次的 Cron 任务（见 wrangler.jsonc）：
+// 批量物理清理仅针对已消费（read）且超出 ReadArchiveWindowSeconds 窗口的记录；
+// 未读（pending）与失败（failed）记录属于严禁自动删除的数据，本任务不触碰。
+// SQL 与封装见 otp.CleanupReadArchive。
+func (h *handler) cleanupReadArchive(ctx context.Context) error {
+	n, err := otp.CleanupReadArchive(ctx, h.db, time.Now().Unix())
 	if err != nil {
 		return err
 	}
-	log.Printf("[清理] 已读超时=%d 未读过期=%d", nRead, nExpired)
+	log.Printf("[清理] 已消费超窗口物理清理=%d", n)
 	return nil
 }
 

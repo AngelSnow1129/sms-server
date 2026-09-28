@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -28,15 +29,35 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// schema 建表语句：直接读生产 migration，避免测试里的表结构与线上漂移。
+// schema 建表语句：按字典序读取 migrations/ 目录下全部 migration
+// （0001_init.sql → 0002_add_raw_content.sql → …），避免测试里的表结构与线上漂移。
 func schema(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join("..", "migrations", "0001_init.sql")
-	b, err := os.ReadFile(path)
+	dir := filepath.Join("..", "migrations")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("读取 migration 失败：%v", err)
+		t.Fatalf("读取 migrations 目录失败：%v", err)
 	}
-	return string(b)
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		t.Fatalf("migrations 目录下未找到任何 .sql")
+	}
+	var b strings.Builder
+	for _, name := range names {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("读取 migration %s 失败：%v", name, err)
+		}
+		b.Write(data)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // statements 把 migration 文本切成可执行语句：先去掉 -- 行注释（migration 的注释里
@@ -97,20 +118,21 @@ func openDB(t *testing.T, maxConns int) *sql.DB {
 
 // row 一条 otps 记录，用于断言状态。
 type row struct {
-	code      string
-	status    string
-	expiresAt int64
-	readAt    sql.NullInt64
-	createdAt int64
-	updatedAt int64
+	code       string
+	status     string
+	expiresAt  int64
+	readAt     sql.NullInt64
+	rawContent string
+	createdAt  int64
+	updatedAt  int64
 }
 
 func fetch(t *testing.T, db *sql.DB, tokenHash string) row {
 	t.Helper()
 	var r row
 	err := db.QueryRow(
-		`SELECT code, status, expires_at, read_at, created_at, updated_at FROM otps WHERE token_hash = ?`,
-		tokenHash).Scan(&r.code, &r.status, &r.expiresAt, &r.readAt, &r.createdAt, &r.updatedAt)
+		`SELECT code, status, expires_at, read_at, raw_content, created_at, updated_at FROM otps WHERE token_hash = ?`,
+		tokenHash).Scan(&r.code, &r.status, &r.expiresAt, &r.readAt, &r.rawContent, &r.createdAt, &r.updatedAt)
 	if err != nil {
 		t.Fatalf("查询 %q 失败：%v", tokenHash, err)
 	}

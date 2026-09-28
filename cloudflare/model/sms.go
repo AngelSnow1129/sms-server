@@ -10,8 +10,10 @@ import (
 
 // OTPResponse 查询验证码响应
 type OTPResponse struct {
-	Status string  `json:"status"`         // 状态：success/pending
-	Code   *string `json:"code,omitempty"` // 验证码
+	Status     string  `json:"status"`                // 状态：success/failures/pending
+	Code       *string `json:"code,omitempty"`        // 验证码（status=success 时）；status=failures 时为失败标记
+	RawContent *string `json:"raw_content,omitempty"` // 短信原文（完整保留，取码成功或失败标记时返回）
+	Reason     *string `json:"reason,omitempty"`      // status=failures 时的原因说明
 }
 
 // HMACPhoneNumber 对手机号进行 HMAC-SHA256 哈希，返回十六进制（与自托管版一致）

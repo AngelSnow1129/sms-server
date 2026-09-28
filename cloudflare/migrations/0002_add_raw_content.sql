@@ -1,0 +1,13 @@
+-- 留存策略调整（对应需求：原文完整保留 / 失败标记 / 未读严禁删除 / 已消费低频清理）
+--
+-- 1) raw_content 完整保存短信原文（req.Body 原样，不做任何清洗或截断），
+--    取码时随验证码一并返回，便于排查「为什么提取成了这个码」。
+-- 2) 提取失败不再静默丢弃：应用层把该行标为 failed（code 存 'Failures'，
+--    常量见 otp 包），用户查询即可看到失败原因；清理任务绝不触碰 failed 行，
+--    同号新短信到达时按 upsert 覆盖。
+-- 3) 未读（pending）记录属于关键有效数据，严禁自动删除或过期失效。
+--    expires_at 列保留且继续写入，但降级为信息字段（「建议有效期」提示），
+--    取码语句与清理任务均不再以它为准。
+-- 4) 已消费（read）记录允许在库中累积，由每月一次的 Cron 批量物理清理
+--    超出 30 天窗口的 read 记录（见 otp.CleanupReadArchive）。
+ALTER TABLE otps ADD COLUMN raw_content TEXT NOT NULL DEFAULT '';
