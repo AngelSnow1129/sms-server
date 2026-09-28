@@ -2,9 +2,16 @@ name: Cloudflare 门禁
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      # 本分支自身也要触发门禁：此前只限定 main，导致推送到 cloudflare 分支
+      # 从不运行云部门禁（推送历史零运行记录）。分支在被合回 main 之前，
+      # 其 WASM 构建与 SQL 实证只能在推送时由本工作流独立验证。
+      - cloudflare
     paths:
       - "cloudflare/**"
+      # workflow 文件本身的变更也要触发，否则触发器改动无法被验证
+      - ".github/workflows/cloudflare.yml"
   pull_request:
     paths:
       - "cloudflare/**"
