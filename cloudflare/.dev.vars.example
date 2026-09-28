@@ -1,0 +1,5 @@
+# 复制为 .dev.vars 后填入真实值（wrangler dev 本地读取；线上在部署页面填入，或用 wrangler secret put 配置）
+# 手机号 HMAC-SHA256 密钥，与调用方保持一致。生成：openssl rand -hex 32
+HMAC_SECRET=replace-with-random-32-bytes-hex
+# webhook 路径鉴权密钥，即 /api/v1/webhook/sms/{token} 中的 {token}。生成：openssl rand -hex 32
+WEBHOOK_SECRET=replace-with-random-32-bytes-hex

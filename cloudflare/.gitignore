@@ -1,0 +1,6 @@
+# wrangler 构建产物
+build/
+node_modules/
+
+# 本地密钥（切勿提交真实密钥，线上用 wrangler secret put）
+.dev.vars

@@ -1,0 +1,30 @@
+{
+  // Deploy to Cloudflare 按钮会克隆本子目录，读取本文件自动开通资源：
+  // d1_databases 中的 database_id 是占位符，部署时由 Cloudflare 替换为真实值。
+  "name": "sms-server",
+  "main": "./build/worker.mjs",
+  "compatibility_date": "2026-09-28",
+  "build": {
+    "command": "npm run build"
+  },
+  "vars": {
+    // 验证码有效期（秒）。可按需修改。
+    "OTP_TTL_SECONDS": "300"
+  },
+  // 资源名/ID 都必须给出默认值：Deploy to Cloudflare 会读取本文件开通资源，
+  // 并在部署时把 database_id 回填为真实值（见 README 一键部署表）。
+  // 注意：绑定名 DB 与 package.json 的 migration 命令、main.go 的 sql.Open 保持一致。
+  "d1_databases": [
+    {
+      "binding": "DB",
+      // 用户可在部署向导里改名；migration 用 binding 名 DB 而非此名，改名也不会失效。
+      "database_name": "sms-server-db",
+      // 占位值，部署时由 Cloudflare 替换为真实 database_id。
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "triggers": {
+    // 每 30 分钟清理一次过期记录（已读超 10 分钟 / 未读已过期）
+    "crons": ["*/30 * * * *"]
+  }
+}

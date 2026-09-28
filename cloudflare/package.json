@@ -1,0 +1,32 @@
+{
+  "name": "sms-server-cloudflare",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "go run github.com/syumai/workers-go/cmd/workers-assets-gen -mode=go && GOOS=js GOARCH=wasm go build -o ./build/app.wasm .",
+    "deploy": "npm run db:migrations:apply && wrangler deploy",
+    "db:migrations:apply": "wrangler d1 migrations apply DB --remote",
+    "db:migrations:apply:local": "wrangler d1 migrations apply DB --local",
+    "dev": "wrangler dev",
+    "start": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  },
+  "cloudflare": {
+    "bindings": {
+      "DB": {
+        "description": "D1 数据库，存放待取验证码。首次部署时自动创建，建表由 deploy 脚本中的 migration 完成。"
+      },
+      "HMAC_SECRET": {
+        "description": "手机号 HMAC-SHA256 密钥，必须与调用方一致。生成方式：`openssl rand -hex 32`。"
+      },
+      "WEBHOOK_SECRET": {
+        "description": "webhook 路径鉴权密钥，即 `/api/v1/webhook/sms/{token}` 中的 `{token}`。生成方式：`openssl rand -hex 32`。"
+      },
+      "OTP_TTL_SECONDS": {
+        "description": "验证码有效期（秒），默认 300。"
+      }
+    }
+  }
+}

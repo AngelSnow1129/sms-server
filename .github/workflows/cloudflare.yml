@@ -1,0 +1,65 @@
+name: Cloudflare 门禁
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cloudflare/**"
+  pull_request:
+    paths:
+      - "cloudflare/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 与主 CI 保持一致，禁止自动下载其它 Go 工具链。
+  GOTOOLCHAIN: local
+
+jobs:
+  verify:
+    name: 格式 / 静态检查 / WASM 构建 / 单测
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ./cloudflare
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          # defaults.run 不影响 Action，版本文件路径从仓库根目录解析。
+          go-version-file: go.mod
+          cache: false
+
+      - name: gofmt 检查
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::以下文件未通过 gofmt，请在 cloudflare/ 下执行 gofmt -w ."
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        env:
+          GOOS: js
+          GOARCH: wasm
+        run: go vet ./...
+
+      - name: 构建 WASM
+        env:
+          GOOS: js
+          GOARCH: wasm
+        run: go build ./...
+
+      - name: 运行单元测试
+        run: go test ./...
