@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"smsserver/cache"
 	"smsserver/model"
+	"smsserver/store"
 )
 
 // 验证码正则：匹配4-8位纯数字
@@ -27,17 +27,18 @@ type smsRepository interface {
 
 // OTPService 验证码业务逻辑
 type OTPService struct {
-	repo       smsRepository
-	cache      *cache.OTPCache
+	repo smsRepository
+	// 验证码存储依赖抽象而非具体实现，便于将来替换为 SQLite 或 MySQL 实现
+	store      store.Store
 	hmacSecret string
 	wg         sync.WaitGroup // 追踪在途短信处理，保证优雅关闭不丢短信
 }
 
 // NewOTPService 创建OTP服务实例
-func NewOTPService(repo smsRepository, cache *cache.OTPCache, hmacSecret string) *OTPService {
+func NewOTPService(repo smsRepository, otpStore store.Store, hmacSecret string) *OTPService {
 	return &OTPService{
 		repo:       repo,
-		cache:      cache,
+		store:      otpStore,
 		hmacSecret: hmacSecret,
 	}
 }
@@ -73,7 +74,7 @@ func (s *OTPService) ProcessIncomingSMS(provider, sender, recipient, body string
 	code := s.extractCode(body)
 	if code != "" {
 		record.ExtractedCode = &code
-		s.cache.Set(token, code)
+		s.store.Set(token, code)
 	}
 
 	// 写入数据库（失败仅记录日志，不重试）
@@ -89,7 +90,7 @@ func (s *OTPService) ProcessIncomingSMS(provider, sender, recipient, body string
 
 // GetOTP 获取验证码（阅后即焚）
 func (s *OTPService) GetOTP(token string) (string, bool) {
-	return s.cache.GetAndDelete(token)
+	return s.store.GetAndDelete(token)
 }
 
 // extractCode 从短信内容中提取验证码
@@ -120,9 +121,9 @@ func (s *OTPService) StartCleanupWorker(ctx context.Context, interval time.Durat
 				log.Println("[清理] 已停止")
 				return
 			case <-ticker.C:
-				removed := s.cache.Cleanup()
+				removed := s.store.Cleanup()
 				if removed > 0 {
-					log.Printf("[清理] 移除=%d 剩余=%d", removed, s.cache.Len())
+					log.Printf("[清理] 移除=%d 剩余=%d", removed, s.store.Len())
 				}
 			}
 		}

@@ -6,6 +6,12 @@
 
 从短信供应商回调中自动提取验证码并缓存,供调用方轮询获取的服务。调用方无需接入各短信平台的 API,只需接收 webhook 并按手机号取码。
 
+## Cloudflare 一键部署
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/AngelSnow1129/WebHookServer/tree/main/cloudflare)
+
+无需自备服务器与数据库即可部署 Workers + D1 版本,配置项、迁移流程与验证方式见 [cloudflare/README.md](cloudflare/README.md)。
+
 ## 数据流
 
 ```
@@ -41,11 +47,17 @@ SMSServer/
 ├── service/otp_service_test.go      验证码提取、缓存写入、在途追踪测试
 ├── cache/otp_cache.go               线程安全内存缓存(TTL 过期 + 阅后即焚)
 ├── cache/otp_cache_test.go          TTL、阅后即焚、并发安全测试
+├── store/store.go                   验证码存储抽象层(Store 接口,只定义能力不含实现)
+├── store/store_test.go              存储契约测试(在 implementations 登记实现即复用全部用例)
+├── store/sqlite/sqlite_store.go     验证码存储的 SQLite 实现(纯 Go 驱动,软删除保留 10 分钟)
 ├── repository/sms_repo.go           MySQL 仓储层(GORM)
 ├── repository/integration_test.go   MySQL 集成测试(需 -tags=integration)
 ├── model/sms.go                     数据模型(含索引标签)、HMAC 工具函数
 ├── docs/LOGGING.md                  运行日志规范
+├── docs/HANDOVER.md                 交接文档:本轮改动的设计取舍与验证记录
+├── cloudflare/                      Cloudflare Workers + D1 部署形态(自包含子目录,见 cloudflare/README.md)
 ├── .github/workflows/ci.yml         CI:格式/静态检查/单测/集成测试/交叉编译
+├── .github/workflows/cloudflare.yml Cloudflare:格式/静态检查/WASM 构建/单测
 ├── .github/workflows/release.yml    发布:tag 触发 → Release + GHCR 多架构镜像
 ├── Dockerfile                       多阶段构建,distroless 非 root 运行
 ├── .dockerignore
@@ -55,7 +67,7 @@ SMSServer/
 └── sms-server                       编译产物(已被 .gitignore 忽略)
 ```
 
-代码分层为 `main → handler → service → {cache, repository} → model`,无 Web 框架,仅依赖 `gorm.io/gorm` 与 MySQL 驱动。为便于测试,`handler` 与 `service` 分别通过 `otpService`、`smsRepository` 接口解耦具体实现。
+代码分层为 `main → handler → service → {store, repository} → model`,其中 `store` 只定义验证码存储抽象(`Store` 接口),`cache.OTPCache` 是它的内存实现;接入 SQLite/MySQL 时只需替换 `main.go` 里的接线,`service` 无需改动。无 Web 框架,仅依赖 `gorm.io/gorm` 与 MySQL 驱动。为便于测试,`handler` 与 `service` 分别通过 `otpService`、`smsRepository` 接口解耦具体实现。
 
 ## 环境要求
 
@@ -167,11 +179,29 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/v1/otp" -d "{\"token\":\"$TOKEN\"}"
 | 变量 | 必填 | 默认值 | 单位 | 说明 |
 |---|---|---|---|---|
 | `SERVER_ADDR` | 否 | `:53340` | — | HTTP 监听地址 |
-| `MYSQL_DSN` | 否 | `user:password@tcp(127.0.0.1:3306)/smsdb?parseTime=true&loc=Local` | — | GORM 连接串,`parseTime=true` 必须保留 |
+| `DB_DRIVER` | 否 | `mysql` | — | 持久化后端,可选 `mysql` / `sqlite`。非法值启动失败 |
+| `MYSQL_DSN` | 否 | `user:password@tcp(127.0.0.1:3306)/smsdb?parseTime=true&loc=Local` | — | GORM 连接串,`parseTime=true` 必须保留。仅 `DB_DRIVER=mysql` 时使用 |
+| `SQLITE_PATH` | 否 | `./sms.db` | — | SQLite 库路径。仅 `DB_DRIVER=sqlite` 时使用,存放验证码表 `otps` |
 | `HMAC_SECRET` | **是** | 无 | — | 手机号 HMAC-SHA256 密钥。为空时启动失败 |
 | `WEBHOOK_SECRET` | **是** | 无 | — | webhook 鉴权密钥。为空时启动失败 |
 | `OTP_CACHE_TTL_MINUTES` | 否 | `5` | **分钟** | 验证码有效期。设置为 `5` 即 5 分钟 |
 | `CLEANUP_INTERVAL_SECONDS` | 否 | `30` | **秒** | 后台清理间隔。不设置即为 30 秒 |
+
+### `DB_DRIVER`:mysql 与 sqlite 的差异
+
+`DB_DRIVER` 是唯一的后端开关,接线集中在 `main.go` 的 `newOTPStore` / `newSMSRepository`。默认 `mysql`,**不设置时行为与引入 sqlite 前完全一致**。
+
+| 维度 | `mysql`(默认) | `sqlite` |
+|---|---|---|
+| MySQL 连接 | 启动时连接并 `AutoMigrate` | **完全不连接 MySQL**,无 MySQL 也能启动 |
+| 短信原文(`sms_records`) | 落库 MySQL | **不持久化**(`Create` 空实现,启动日志会说明) |
+| 验证码存储 | 内存(`cache.OTPCache`) | SQLite 表 `otps` |
+| 重启后验证码 | 丢失 | 未过期的仍在 |
+| 读取后 | 物理删除 | **软删除**:`status='read'` + 写 `read_at`,保留 10 分钟供对账,再由清理协程物理删除 |
+
+> `sqlite` 模式下**短信记录不落库**是一个已知的功能缺口:仓储层 `repository.SMSRepository` 依赖 `*gorm.DB` 与 MySQL 方言,纯 Go SQLite 驱动未在本轮接入。若你需要短信原文留存,请用 `mysql` 模式。
+
+SQLite 实现使用纯 Go 驱动 `modernc.org/sqlite`(无 CGO),与 `CGO_ENABLED=0` + distroless 镜像兼容。两种验证码存储实现共用 `store.Store` 接口,由 `store/store_test.go` 的同一组契约用例覆盖。
 
 两个时间变量分别由 `config.getMinutesEnv` / `config.getSecondsEnv` 解析,单位与变量名一致,且非法值(非整数)会回退到默认值。相关行为由 `config/config_test.go` 覆盖。
 
@@ -320,6 +350,7 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:3306)/smsdb_test?parseTime=true&loc=Loca
 | 包 | 覆盖内容 |
 |---|---|
 | `cache` | TTL 过期、阅后即焚、覆盖写入、`Cleanup` 只清过期项、并发访问(`-race`) |
+| `store` | 存储契约用例:写入/覆盖、阅后即焚、TTL 失效、`Cleanup` 计数、`Len` 统计。**同一组用例对内存与 SQLite 两个实现各跑一遍**(新实现登记后自动复用) |
 | `config` | 默认值、环境变量覆盖、分钟/秒单位正确性、非法值回退 |
 | `handler` | **前缀路由能命中真实密钥**(关键回归)、字面量 `{token}` 被拒、鉴权各分支、非 POST、非法 JSON、超大请求体、`token` 裁剪、响应结构 |
 | `service` | 验证码提取 13 种格式、缓存 key 正确性、无验证码时不写缓存、写库失败语义、阅后即焚、新码覆盖旧码、`WaitInFlight` 在途追踪、清理协程退出 |
@@ -332,6 +363,7 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:3306)/smsdb_test?parseTime=true&loc=Loca
 | 工作流 | 触发条件 | 内容 |
 |---|---|---|
 | [`ci.yml`](.github/workflows/ci.yml) | push 到 `main`、所有 PR、手动 | `gofmt` → `go mod tidy` 幂等性 → `go vet` → `go build` → 单测(`-race -shuffle=on` + 覆盖率)→ **MySQL 8.0 集成测试** → 5 平台交叉编译 |
+| [`cloudflare.yml`](.github/workflows/cloudflare.yml) | `cloudflare/**` 变更 push 到 `main` 或发起 PR、手动 | 在独立 module 中执行 `gofmt` → `go vet` → `GOOS=js GOARCH=wasm go build` → 单测 |
 | [`release.yml`](.github/workflows/release.yml) | 推送 `v*.*.*` tag、手动 | 发布前门禁 → 5 平台编译并打包 → 生成 `SHA256SUMS` → 创建 GitHub Release → 推送多架构镜像到 GHCR |
 
 CI 显式设置 `GOTOOLCHAIN=local`,禁止自动下载其它 Go 工具链。若 `go.mod` 的 `go` 指令高于实际安装版本,会**明确报错**而不是静默切换版本——这能防止 CI 悄悄改用 Go 1.22 而使前缀路由的兼容性假设失效。

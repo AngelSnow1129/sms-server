@@ -63,3 +63,10 @@ jobs:
 
       - name: 运行单元测试
         run: go test ./...
+
+      # d1sqltest 是独立 module，不会被上一步的 ./... 递归到，必须显式跑。
+      # 它是 CF 版最关键的一批证据：用真实 migration 建表，实证取码语句
+      # UPDATE ... RETURNING 在并发下只有一个请求能取走同一验证码。
+      - name: 运行 SQL 语义实证（独立 module）
+        run: go test -race ./...
+        working-directory: ./cloudflare/d1sqltest

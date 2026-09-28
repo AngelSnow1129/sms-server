@@ -18,3 +18,29 @@ mem.prof
 .vscode/
 *.swp
 .DS_Store
+
+# 运行时数据文件
+# SQLITE_PATH 指向仓库内时产生的验证码库，含验证码明文，切勿提交
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Cloudflare / wrangler 产物
+# .dev.vars 与 build/ 已在 cloudflare/.gitignore 覆盖，
+# 这里补充 wrangler 本地状态与根目录下的误落产物。
+.wrangler/
+# api.json: wrangler 本地 Local Explorer 生成的 OpenAPI dump，非源码
+api.json
+
+# AI 编码工具目录
+# .agents/ 与 .claude/skills 是社区 registry 安装到项目级的技能副本（.claude 下为符号链接），
+# skills-lock.json 是其锁文件。仓库根目录没有 package.json 与 install 脚本，
+# 提交这些副本既无法在 CI 复现，也会把数百 KB 第三方内容带入仓库；
+# 如需团队共享，应改为提交 package.json + install 脚本，仅保留锁文件。
+.agents/
+.claude/
+.rustcode/
+skills-lock.json
+.mcp.json

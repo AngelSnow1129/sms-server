@@ -5,14 +5,19 @@ import (
 	"time"
 
 	"smsserver/model"
+	"smsserver/store"
 )
 
-// OTPCache 验证码内存缓存（线程安全）
+// OTPCache 验证码内存缓存（线程安全），是 store.Store 的内存实现
 type OTPCache struct {
 	mu   sync.RWMutex
 	data map[string]model.OTPInfo
 	ttl  time.Duration
 }
+
+// 编译期断言：OTPCache 必须满足 store.Store，
+// 否则上层依赖接口的接线要到运行期才发现缺方法。
+var _ store.Store = (*OTPCache)(nil)
 
 // NewOTPCache 创建缓存实例
 func NewOTPCache(ttl time.Duration) *OTPCache {
