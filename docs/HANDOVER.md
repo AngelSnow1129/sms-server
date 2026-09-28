@@ -44,13 +44,13 @@
 当前在 **`cloudflare` 分支**，与 `origin/main` 已分叉于 `0c77cbe`：
 
 ```
-0c77cbe ──┬── 10d7c8e ── 14671cf   (cloudflare, HEAD：本轮改动)
+0c77cbe ──┬── 10d7c8e ── 14671cf ── fb24e36   (cloudflare, HEAD：本轮改动)
           └── 2cce4f4 ── 562401b ── df633db   (origin/main：smsforward 特性, PR #1)
 ```
 
 | 侧 | 提交 | 内容 |
 |---|---|---|
-| 本地（2 个） | `10d7c8e`、`14671cf` | Cloudflare Workers/D1 形态、`store.Store` 抽象、SQLite 后端、`DB_DRIVER`、文档 |
+| 本地（3 个） | `10d7c8e`、`14671cf`、`fb24e36` | Cloudflare Workers/D1 形态、`store.Store` 抽象、SQLite 后端、MySQL 后端、`DB_DRIVER` + `OTP_STORE`、文档 |
 | 上游（3 个） | `2cce4f4`、`562401b`、`df633db` | 模板化验证码提取、`smsforward` 通道 webhook、CI 产物上传 |
 
 **两边互不完整**：`main` 上没有 SQLite 后端与 `store` 抽象；本分支没有上游的模板提取与 smsforward 通道。上游新增了 3 个本地没有的文件：`model/smsforward.go`、`model/otp_template.go`、`docs/WIKI_SMSFORWARD_TEMPLATES.md`。
@@ -64,6 +64,8 @@ config/config.go   .env.example   main.go   README.md   service/otp_service.go
 合并后**必须重跑第 5 节的完整门禁**：当前分支的门禁通过，只因为它的代码里压根不含上游那批功能——两套功能共存尚未被任何一次验证覆盖过。
 
 > 分叉是并行开发产生的，不是错误。合回前请勿在本分支上直接改上游那批文件，否则冲突面会继续扩大。
+
+**合并后必改**：两个 README 的 Deploy to Cloudflare 按钮当前指向 `tree/cloudflare/cloudflare`（因为 `cloudflare/` 子目录只在分支上），**合回 main 后要改回 `tree/main/cloudflare`**，否则用户克隆的是分支快照而非主线。
 
 ## 3. 架构与关键决策
 
@@ -172,7 +174,7 @@ Go 1.21 的 `net/http.ServeMux` **不支持** `{token}` 通配语法（1.22 才�
 2. `NewHandler` 直接用上游的 3 参数版（本分支没改它的签名，冲突只来自调用点）
 3. `ProcessIncomingSMS` 用上游的 7 参数版，模板提取逻辑（`extractCodeWithTemplates`）随之生效
 4. `main.go` 的接线要同时满足两边：`newOTPStore(cfg)` 的结果传给 `NewOTPService`，`cfg.OTPTemplates`、`cfg.SMSForwardChannels` 也要传进去
-5. `config.Config` 两组字段都要留（互不冲突，只是同一处结构体）
+5. `config.Config` 两组字段都要留（互不冲突，只是同一处结构体）——本分支侧记得带上 `OTPStore` 字段与 `StoreAuto/StoreMemory/StoreSQLite/StoreMySQL` 常量（3.3b），上游侧的 `OTPTemplates`、`SMSForwardChannels` 照常保留
 
 **合并后必做**：第 5 节门禁全量重跑，并补一次针对新增 `smsforward` 路由的冒烟验证。本分支的 `store` 契约测试（`store/store_test.go`）覆盖不到上游的模板提取路径，两套逻辑的交叉行为目前**没有任何测试覆盖**。
 

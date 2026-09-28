@@ -4,7 +4,7 @@
 
 自托管版的无服务器移植：跑在 Cloudflare Workers 上，验证码存 D1，**免费额度内可长期 $0/月 运行，无需任何服务器与数据库运维**。
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/AngelSnow1129/WebHookServer/tree/main/cloudflare)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/AngelSnow1129/WebHookServer/tree/cloudflare/cloudflare)
 
 > 点击按钮 → 登录 Cloudflare → 向导中填写两个密钥 → Deploy。
 > Cloudflare 会自动：克隆仓库 → 创建 D1 数据库 → 运行 migration 建表 → 构建并部署 Worker。

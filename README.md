@@ -8,7 +8,7 @@
 
 ## Cloudflare 一键部署
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/AngelSnow1129/WebHookServer/tree/main/cloudflare)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/AngelSnow1129/WebHookServer/tree/cloudflare/cloudflare)
 
 无需自备服务器与数据库即可部署 Workers + D1 版本,配置项、迁移流程与验证方式见 [cloudflare/README.md](cloudflare/README.md)。
 
