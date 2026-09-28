@@ -292,5 +292,6 @@ MySQL 集成测试需 `-tags=integration` 与真实数据库。
 | `handler/` | 路由注册（**前缀路由**）、请求校验 |
 | `repository/` | MySQL 仓储，短信原文落库 |
 | `cloudflare/` | Workers + D1 形态，独立 module，自包含 |
+| `pages/` | 静态文档站：取码助手、接口文档、SmsForwarder 对接教程（纯静态零依赖，见 `pages/README.md`） |
 | `docs/LOGGING.md` | 日志字段与级别规范 |
 | `.github/workflows/` | CI / Cloudflare 门禁 / 发布 |

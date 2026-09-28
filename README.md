@@ -55,6 +55,7 @@ SMSServer/
 ├── repository/integration_test.go   MySQL 集成测试(需 -tags=integration)
 ├── model/sms.go                     数据模型(含索引标签)、HMAC 工具函数
 ├── docs/LOGGING.md                  运行日志规范
+├── pages/                           静态文档站:取码助手、接口文档、SmsForwarder 对接教程(见 pages/README.md)
 ├── docs/HANDOVER.md                 交接文档:本轮改动的设计取舍与验证记录
 ├── docs/INTEGRATION.md              Webhook 对接指南:来源方/取码方接入、token 计算、轮询与联调
 ├── cloudflare/                      Cloudflare Workers + D1 部署形态(自包含子目录,见 cloudflare/README.md)
