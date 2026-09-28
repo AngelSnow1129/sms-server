@@ -17,27 +17,33 @@ import (
 // Enhancements），若按 `/api/v1/webhook/sms/{token}` 注册，`{token}` 只会被当作普通
 // 路径段字面量，真实密钥的请求会全部 404。因此注册前缀，由处理器自行从路径取 token。
 const WebhookPathPrefix = "/api/v1/webhook/sms/"
+const SMSForwardPathPrefix = "/api/v1/webhook/smsforward/"
 
 // maxBodyBytes 请求体上限，防止未鉴权接口被超大 body 拖垮
 const maxBodyBytes = 64 << 10 // 64 KiB
 
 // otpService 定义处理器所需的业务能力，抽象为接口便于测试注入
 type otpService interface {
-	ProcessIncomingSMSAsync(provider, sender, recipient, body string, receivedAt time.Time)
+	ProcessIncomingSMSAsync(provider, sender, recipient, body, channelID, source string, receivedAt time.Time)
 	GetOTP(token string) (string, bool)
 }
 
 // Handler HTTP处理器
 type Handler struct {
-	svc           otpService
-	webhookSecret string
+	svc                otpService
+	webhookSecret      string
+	smsForwardChannels map[string]model.SMSForwardChannel
 }
 
 // NewHandler 创建处理器实例
-func NewHandler(svc otpService, webhookSecret string) *Handler {
+func NewHandler(svc otpService, webhookSecret string, smsForwardChannels map[string]model.SMSForwardChannel) *Handler {
+	if smsForwardChannels == nil {
+		smsForwardChannels = map[string]model.SMSForwardChannel{}
+	}
 	return &Handler{
-		svc:           svc,
-		webhookSecret: webhookSecret,
+		svc:                svc,
+		webhookSecret:      webhookSecret,
+		smsForwardChannels: smsForwardChannels,
 	}
 }
 
@@ -48,6 +54,7 @@ func NewHandler(svc otpService, webhookSecret string) *Handler {
 func NewRouter(h *Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc(WebhookPathPrefix, h.WebhookSMS)
+	mux.HandleFunc(SMSForwardPathPrefix, h.WebhookSMSForward)
 	mux.HandleFunc("/api/v1/otp", h.GetOTP)
 	return mux
 }
@@ -106,6 +113,82 @@ func (h *Handler) WebhookSMS(w http.ResponseWriter, r *http.Request) {
 		req.Sender,
 		req.Recipient,
 		req.Body,
+		"",
+		"",
+		time.Now(),
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
+func extractSMSForwardPath(path string) (channelID string, token string) {
+	if !strings.HasPrefix(path, SMSForwardPathPrefix) {
+		return "", ""
+	}
+	rest := strings.TrimPrefix(path, SMSForwardPathPrefix)
+	parts := strings.Split(rest, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", ""
+	}
+	return parts[0], parts[1]
+}
+
+// WebhookSMSForward smsforward 多通道回调接口
+// POST /api/v1/webhook/smsforward/{channel_id}/{token}
+func (h *Handler) WebhookSMSForward(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	channelID, token := extractSMSForwardPath(r.URL.Path)
+	channel, ok := h.smsForwardChannels[channelID]
+	if !ok || !channel.Enabled || token == "" ||
+		subtle.ConstantTimeCompare([]byte(token), []byte(channel.WebhookSecret)) != 1 {
+		log.Printf("[网关] smsforward 鉴权失败 path=%q remote=%s", r.URL.Path, r.RemoteAddr)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+
+	var req struct {
+		Provider  string `json:"provider"`
+		Sender    string `json:"sender"`
+		Recipient string `json:"recipient"`
+		Body      string `json:"body"`
+		Source    string `json:"source"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[网关] smsforward 请求体解析失败 channel=%s remote=%s err=%v", channelID, r.RemoteAddr, err)
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+
+	if len(channel.SourceWhitelist) > 0 && !containsFold(channel.SourceWhitelist, req.Source) {
+		log.Printf("[网关] smsforward 来源不在白名单 channel=%s source=%q remote=%s", channelID, req.Source, r.RemoteAddr)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	provider := strings.TrimSpace(req.Provider)
+	if provider == "" {
+		provider = channel.Provider
+	}
+	if provider == "" {
+		provider = "smsforward"
+	}
+
+	h.svc.ProcessIncomingSMSAsync(
+		provider,
+		req.Sender,
+		req.Recipient,
+		req.Body,
+		channelID,
+		req.Source,
 		time.Now(),
 	)
 
@@ -152,4 +235,14 @@ func (h *Handler) GetOTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func containsFold(items []string, target string) bool {
+	target = strings.TrimSpace(target)
+	for _, item := range items {
+		if strings.EqualFold(strings.TrimSpace(item), target) {
+			return true
+		}
+	}
+	return false
 }

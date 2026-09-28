@@ -151,5 +151,27 @@ jobs:
           # 全静态链接：镜像可为 scratch/Alpine，且不受 glibc 版本影响
           CGO_ENABLED: "0"
         run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dist"
+          binary="sms-server"
+          if [ "${GOOS}" = "windows" ]; then
+            binary="sms-server.exe"
+          fi
           go build -trimpath -v \
-            -o "$RUNNER_TEMP/sms-server-${{ matrix.goos }}-${{ matrix.goarch }}" .
+            -o "$RUNNER_TEMP/dist/${binary}" .
+
+          name="sms-server_ci_${{ github.run_number }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          cd "$RUNNER_TEMP/dist"
+          if [ "${GOOS}" = "windows" ]; then
+            zip -q "${name}.zip" "${binary}"
+          else
+            tar czf "${name}.tar.gz" "${binary}"
+          fi
+          rm "${binary}"
+
+      - name: 上传编译产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error

@@ -155,8 +155,8 @@ func main() {
 		log.Fatalf("[验证码存储] 初始化失败: %v", err)
 	}
 	defer closeStore()
-	svc := service.NewOTPService(repo, otpStore, cfg.HMACSecret)
-	h := handler.NewHandler(svc, cfg.WebhookSecret)
+	svc := service.NewOTPService(repo, otpStore, cfg.HMACSecret, cfg.OTPTemplates)
+	h := handler.NewHandler(svc, cfg.WebhookSecret, cfg.SMSForwardChannels)
 
 	// 启动清理协程
 	ctx, cancel := context.WithCancel(context.Background())

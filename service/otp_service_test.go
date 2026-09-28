@@ -47,7 +47,11 @@ func (f *fakeRepository) last() *model.SMSRecord {
 
 func newTestService(repo *fakeRepository) (*OTPService, *cache.OTPCache) {
 	c := cache.NewOTPCache(time.Minute)
-	return NewOTPService(repo, c, testHMACSecret), c
+	templates := []model.OTPTemplate{
+		{ID: "cn_numeric", Keywords: []string{"验证码"}, CodeType: "numeric", MinLength: 4, MaxLength: 8},
+		{ID: "en_alnum", Keywords: []string{"code", "otp", "verification code"}, CodeType: "alnum", MinLength: 4, MaxLength: 10},
+	}
+	return NewOTPService(repo, c, testHMACSecret, templates), c
 }
 
 // TestExtractCode 覆盖验证码提取的各类真实短信格式
@@ -87,7 +91,7 @@ func TestProcessIncomingSMSStoresCodeAndPersists(t *testing.T) {
 	repo := &fakeRepository{}
 	svc, c := newTestService(repo)
 
-	svc.ProcessIncomingSMS("twilio", "+8613800000000", "+8613900000000", "您的验证码是123456", time.Now())
+	svc.ProcessIncomingSMS("twilio", "+8613800000000", "+8613900000000", "您的验证码是123456", "", "", time.Now())
 
 	// 缓存 key 必须是收件人号码的 HMAC
 	key := model.HMACPhoneNumber("+8613900000000", testHMACSecret)
@@ -118,7 +122,7 @@ func TestProcessIncomingSMSWithoutCode(t *testing.T) {
 	repo := &fakeRepository{}
 	svc, c := newTestService(repo)
 
-	svc.ProcessIncomingSMS("twilio", "+8613800000001", "+8613900000001", "您的话费余额不足", time.Now())
+	svc.ProcessIncomingSMS("twilio", "+8613800000001", "+8613900000001", "您的话费余额不足", "", "", time.Now())
 
 	key := model.HMACPhoneNumber("+8613900000001", testHMACSecret)
 	if _, ok := c.Get(key); ok {
@@ -144,7 +148,7 @@ func TestProcessIncomingSMSOnDBFailure(t *testing.T) {
 	repo := &fakeRepository{err: errors.New("connection refused")}
 	svc, c := newTestService(repo)
 
-	svc.ProcessIncomingSMS("twilio", "+8613800000002", "+8613900000002", "验证码654321", time.Now())
+	svc.ProcessIncomingSMS("twilio", "+8613800000002", "+8613900000002", "验证码654321", "", "", time.Now())
 
 	key := model.HMACPhoneNumber("+8613900000002", testHMACSecret)
 	code, ok := c.Get(key)
@@ -160,7 +164,7 @@ func TestGetOTPIsOneShot(t *testing.T) {
 	repo := &fakeRepository{}
 	svc, _ := newTestService(repo)
 
-	svc.ProcessIncomingSMS("twilio", "+8613800000000", "+8613900000000", "验证码123456", time.Now())
+	svc.ProcessIncomingSMS("twilio", "+8613800000000", "+8613900000000", "验证码123456", "", "", time.Now())
 	key := model.HMACPhoneNumber("+8613900000000", testHMACSecret)
 
 	code, ok := svc.GetOTP(key)
@@ -187,8 +191,8 @@ func TestNewCodeOverwritesPrevious(t *testing.T) {
 	svc, _ := newTestService(repo)
 	key := model.HMACPhoneNumber("+8613900000000", testHMACSecret)
 
-	svc.ProcessIncomingSMS("twilio", "+8613800000000", "+8613900000000", "验证码111111", time.Now())
-	svc.ProcessIncomingSMS("twilio", "+8613800000000", "+8613900000000", "验证码222222", time.Now())
+	svc.ProcessIncomingSMS("twilio", "+8613800000000", "+8613900000000", "验证码111111", "", "", time.Now())
+	svc.ProcessIncomingSMS("twilio", "+8613800000000", "+8613900000000", "验证码222222", "", "", time.Now())
 
 	code, ok := svc.GetOTP(key)
 	if !ok || code != "222222" {
@@ -206,7 +210,7 @@ func TestProcessIncomingSMSAsyncWaitInFlight(t *testing.T) {
 	svc, _ := newTestService(repo)
 
 	for i := 0; i < 20; i++ {
-		svc.ProcessIncomingSMSAsync("twilio", "+8613800000000", "+8613900000000", "验证码123456", time.Now())
+		svc.ProcessIncomingSMSAsync("twilio", "+8613800000000", "+8613900000000", "验证码123456", "", "", time.Now())
 	}
 	svc.WaitInFlight()
 
@@ -253,5 +257,45 @@ func TestStartCleanupWorkerStopsOnContextCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancel 后清理协程未退出")
+	}
+}
+
+func TestProcessIncomingSMSExtractsAlnumNearKeyword(t *testing.T) {
+	repo := &fakeRepository{}
+	svc, c := newTestService(repo)
+
+	svc.ProcessIncomingSMS("smsforward", "+12025550111", "+12025550112", "Order 20240921123456. Your verification code is A1B2C3, valid for 5 minutes.", "android-main", "pixel-8", time.Now())
+
+	key := model.HMACPhoneNumber("+12025550112", testHMACSecret)
+	code, ok := c.Get(key)
+	if !ok || code != "A1B2C3" {
+		t.Fatalf("字母数字验证码提取失败: (%q, %v)", code, ok)
+	}
+	rec := repo.last()
+	if rec.TemplateID == nil || *rec.TemplateID != "en_alnum" {
+		t.Fatalf("TemplateID = %v，期望 en_alnum", rec.TemplateID)
+	}
+	if rec.ExtractionConfidence != "strong" || rec.ExtractionStatus != "template_strong_extracted" {
+		t.Fatalf("提取状态异常: status=%s confidence=%s", rec.ExtractionStatus, rec.ExtractionConfidence)
+	}
+	if rec.ChannelID != "android-main" {
+		t.Fatalf("ChannelID = %q，期望 android-main", rec.ChannelID)
+	}
+}
+
+func TestProcessIncomingSMSFallsBackToNumericRegex(t *testing.T) {
+	repo := &fakeRepository{}
+	svc, c := newTestService(repo)
+
+	svc.ProcessIncomingSMS("twilio", "+8613800000000", "+8613900000000", "请使用 876543 完成验证", "", "", time.Now())
+
+	key := model.HMACPhoneNumber("+8613900000000", testHMACSecret)
+	code, ok := c.Get(key)
+	if !ok || code != "876543" {
+		t.Fatalf("回退数字提取失败: (%q, %v)", code, ok)
+	}
+	rec := repo.last()
+	if rec.ExtractionStatus != "fallback_extracted" || rec.ExtractionConfidence != "fallback" {
+		t.Fatalf("回退提取状态异常: status=%s confidence=%s", rec.ExtractionStatus, rec.ExtractionConfidence)
 	}
 }

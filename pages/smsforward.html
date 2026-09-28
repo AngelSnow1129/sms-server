@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SMSForward 对接教程 · SMSServer</title>
+  <meta name="description" content="用安卓备用机 + SmsForwarder 把短信验证码转发到 SMSServer：webhook 配置、消息模板占位符对照、多通道独立鉴权与常见问题。" />
+  <meta name="theme-color" content="#2563EB" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%232563EB'/%3E%3Cstop offset='100%25' stop-color='%230EA5E9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='512' height='512' rx='116' fill='url(%23b)'/%3E%3Cpath d='M120 200a40 40 0 0 1 40-40h192a40 40 0 0 1 40 40v84a40 40 0 0 1-40 40H236l-72 56v-56h-4a40 40 0 0 1-40-40z' fill='%23fff' fill-opacity='.92'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="assets/css/style.css" />
+</head>
+<body>
+
+  <header class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="index.html">
+        <svg class="brand-logo" viewBox="0 0 512 512" aria-hidden="true">
+          <defs>
+            <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#2563EB"/>
+              <stop offset="100%" stop-color="#0EA5E9"/>
+            </linearGradient>
+          </defs>
+          <rect width="512" height="512" rx="116" fill="url(#lg)"/>
+          <path d="M120 200a40 40 0 0 1 40-40h192a40 40 0 0 1 40 40v84a40 40 0 0 1-40 40H236l-72 56v-56h-4a40 40 0 0 1-40-40z" fill="#fff" fill-opacity=".92"/>
+        </svg>
+        <span>SMSServer</span>
+      </a>
+      <nav class="nav-links">
+        <a href="index.html#features">功能特性</a>
+        <a href="index.html#tool">取码助手</a>
+        <a href="docs.html">接口文档</a>
+        <a class="nav-cta" href="index.html">返回首页</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="doc">
+    <a class="back" href="index.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      返回首页
+    </a>
+
+    <h1>SMSForward（SmsForwarder）对接教程</h1>
+    <p class="lead">没有短信供应商回调？用一台安卓备用机 + 开源应用 <a href="https://github.com/pppscn/SmsForwarder" rel="noopener">SmsForwarder</a>，把验证码短信实时转发到 SMSServer 的 webhook。</p>
+
+    <div class="note warn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <span>本教程的<strong>通用模式</strong>（<code>/api/v1/webhook/sms/{token}</code>）在当前代码即可用；<strong>通道模式</strong>（<code>/api/v1/webhook/smsforward/...</code>）依赖尚未合入本分支的上游 PR #1，合入前请用通用模式。</span>
+    </div>
+
+    <h2 id="principle">工作原理</h2>
+    <pre><code>验证码短信到达备用机
+      │  SmsForwarder 按转发规则触发
+      ▼
+webhook 请求（消息模板占位符替换后的 JSON）
+      │  POST {服务地址}/api/v1/webhook/sms/{WEBHOOK_SECRET}
+      ▼
+SMSServer 提取验证码，按收件人号码（= 备用机 SIM 卡号）落缓存
+      │
+      ▼
+你的业务系统用 HMAC(备用机号码) 轮询 /api/v1/otp 取码，取走即焚</code></pre>
+    <p>关键点：<strong>SMSServer 侧的「收件人号码」就是备用机插的那张 SIM 卡的号码</strong>。SmsForwarder 的占位符里没有「本机号码」，所以 <code>recipient</code> 要在模板里写死。</p>
+
+    <h2 id="config-generator">配置生成器</h2>
+    <p>填写下方参数，直接生成可粘贴进 SmsForwarder 的 webhook 地址与消息模板：</p>
+
+    <div class="tool card" id="forwardTool">
+      <div class="grid grid-2">
+        <div class="field">
+          <label for="gMode">对接模式</label>
+          <select class="select" id="gMode">
+            <option value="generic">通用模式（当前版本可用）</option>
+            <option value="channel">通道模式（需 PR #1 合入）</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="gServer">服务地址 <span class="hint">（部署完成后得到的地址）</span></label>
+          <input class="input" id="gServer" type="text" placeholder="https://sms-server.xxx.workers.dev" spellcheck="false" />
+        </div>
+        <div class="field" id="gFieldSecret">
+          <label for="gSecret">WEBHOOK_SECRET <span class="hint">（部署时填写的那个）</span></label>
+          <input class="input" id="gSecret" type="password" placeholder="通用模式的路径密钥" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="field" id="gFieldChannel" style="display:none;">
+          <label for="gChannel">通道 ID（channel_id）</label>
+          <input class="input" id="gChannel" type="text" placeholder="如 android-main" spellcheck="false" />
+        </div>
+        <div class="field" id="gFieldToken" style="display:none;">
+          <label for="gToken">该通道的 webhook_secret</label>
+          <input class="input" id="gToken" type="password" placeholder="SMSFORWARD_CHANNELS_JSON 中配置" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="gRecipient">备用机 SIM 卡号码 <span class="hint">（收验证码的号码，HMAC 依据）</span></label>
+          <input class="input" id="gRecipient" type="text" placeholder="+8613900000000" spellcheck="false" />
+        </div>
+      </div>
+
+      <div class="tool-actions">
+        <button class="btn btn-primary" type="button" id="gCompute">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+          生成 webhook 地址与模板
+        </button>
+      </div>
+
+      <div class="result" id="gResult">
+        <div class="label">webhook 地址 —— 填入 SmsForwarder「Webhook 通知」的 Server 栏</div>
+        <pre><code id="gUrlOut"># 填写上方配置后生成</code></pre>
+        <button class="btn btn-ghost" type="button" data-copy-target="gUrlOut">复制地址</button>
+
+        <div class="label">消息模板（webParams）—— 填入「消息模板」栏，JSON 格式</div>
+        <pre><code id="gTemplateOut"># 填写上方配置后生成</code></pre>
+        <button class="btn btn-ghost" type="button" data-copy-target="gTemplateOut">复制模板</button>
+      </div>
+    </div>
+
+    <h2 id="app-steps">SmsForwarder 侧配置步骤</h2>
+    <ol>
+      <li><strong>安装应用</strong>：从 <a href="https://github.com/pppscn/SmsForwarder/releases" rel="noopener">GitHub Releases</a> 或 <a href="https://gitee.com/pp/SmsForwarder/releases" rel="noopener">Gitee 镜像</a>下载，安装到插着目标 SIM 卡的备用机，授予短信、通知等权限。</li>
+      <li><strong>开启短信转发</strong>：首页开启「转发短信」；在「转发规则」里添加规则，匹配方式可选「全部」或按关键词（如包含 <code>验证码</code>）。</li>
+      <li><strong>添加 Webhook 发送通道</strong>：「发送通道」→ 新建 → 选「Webhook」，按下表填写：
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>SmsForwarder 界面项</th><th>填写值</th></tr></thead>
+            <tbody>
+              <tr><td>请求方式</td><td><code>POST</code></td></tr>
+              <tr><td>Server（服务器）</td><td>上方生成器输出的 webhook 地址</td></tr>
+              <tr><td>消息模板（webParams）</td><td>上方生成器输出的 JSON 模板</td></tr>
+              <tr><td>请求头</td><td>无需手动添加（App 发 JSON 请求体时自动带 <code>Content-Type: application/json</code>）</td></tr>
+              <tr><td>签名（secret）</td><td>留空（SMSServer 不校验 SmsForwarder 的 sign 字段）</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </li>
+      <li><strong>测试</strong>：用另一台手机给备用机发一条验证码短信，或直接在规则页用「测试」按钮发送。SmsForwarder 会显示服务端响应，预期 <code>{"status":"ok"}</code>。</li>
+      <li><strong>验证取码</strong>：用<a href="index.html#tool">首页取码助手</a>生成取码命令（号码填备用机 SIM 卡号），在部署机上执行，预期返回 <code>{"status":"success","code":"..."}</code>。</li>
+    </ol>
+
+    <h2 id="placeholders">消息模板占位符对照</h2>
+    <p>下表来自 SmsForwarder 源码（<code>Constants.kt</code> 的 <code>TAG_LIST</code>），中文占位符与英文占位符等价，模板里用哪个都行：</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>占位符</th><th>含义</th><th>填入 SMSServer 的字段</th><th>必填</th></tr></thead>
+        <tbody>
+          <tr><td><code>{{FROM}}</code> / <code>{{来源号码}}</code></td><td>短信发送方号码</td><td><code>sender</code></td><td>否</td></tr>
+          <tr><td><code>{{SMS}}</code> / <code>{{短信内容}}</code></td><td>短信全文</td><td><code>body</code>（提取验证码的来源）</td><td><strong>是</strong></td></tr>
+          <tr><td>无占位符，手工填死</td><td>备用机 SIM 卡号</td><td><code>recipient</code>（HMAC 的计算依据）</td><td><strong>是</strong></td></tr>
+          <tr><td><code>{{DEVICE_NAME}}</code> / <code>{{设备名称}}</code></td><td>设备备注名</td><td><code>source</code>（通道模式的白名单依据）</td><td>通道模式建议带上</td></tr>
+          <tr><td><code>{{CARD_SLOT}}</code> / <code>{{卡槽信息}}</code></td><td>卡槽标识</td><td>可拼进 <code>provider</code> 区分双卡</td><td>否</td></tr>
+          <tr><td><code>{{RECEIVE_TIME}}</code> / <code>{{接收时间}}</code></td><td>短信接收时间</td><td>无需填入（服务端自行记录接收时间）</td><td>否</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      <span>SmsForwarder 对 JSON 请求体（<code>{</code> 开头的模板）会自动做 JSON 转义后发送，短信内容里的引号、换行不会破坏报文，无需手工处理。</span>
+    </div>
+
+    <h2 id="channel">通道模式：多设备独立鉴权（需 PR #1）</h2>
+    <p>通用模式下所有转发设备共享同一个 <code>WEBHOOK_SECRET</code>。上游 PR #1 引入多通道后，每台备用机可以有自己的密钥，并可绑定提取模板与来源白名单：</p>
+    <pre><code>POST /api/v1/webhook/smsforward/{channel_id}/{token}</code></pre>
+    <p>服务端用环境变量 <code>SMSFORWARD_CHANNELS_JSON</code> 声明通道（自托管版；Workers 版对应 secret/vars）：</p>
+    <pre><code>[
+  {
+    "channel_id": "android-main",
+    "webhook_secret": "&lt;openssl rand -hex 32&gt;",
+    "enabled": true,
+    "provider": "smsforward",
+    "source_whitelist": ["备用机1"]
+  }
+]</code></pre>
+    <ul>
+      <li><code>webhook_secret</code> 是该通道独立的路径密钥，泄漏后只需吊销这一个通道</li>
+      <li>配置了 <code>source_whitelist</code> 时，请求体 <code>source</code> 必须命中（对应模板里的 <code>{{DEVICE_NAME}}</code>），否则拒绝</li>
+      <li>配合 <code>OTP_TEMPLATES_JSON</code> 可为该通道指定关键词/字母数字混合的提取模板，比通用数字正则更准，详见仓库 <code>docs/WIKI_SMSFORWARD_TEMPLATES.md</code></li>
+    </ul>
+
+    <h2 id="faq">常见问题</h2>
+    <h3>SmsForwarder 显示 401 unauthorized</h3>
+    <p>webhook 地址里的密钥与服务端不一致：检查是否复制完整（<code>openssl rand -hex 32</code> 生成的 64 位十六进制）、URL 是否含多余层级。通用模式路径必须是 <code>.../sms/{WEBHOOK_SECRET}</code>；通道模式是 <code>.../smsforward/{channel_id}/{token}</code>，两者不能混用。</p>
+    <h3>webhook 返回 ok 但取码一直 pending</h3>
+    <p>最常见原因是 <strong>recipient 与取码时的号码不一致</strong>：模板里写死的 SIM 号码（如 <code>13900000000</code>）与取码命令里的号码（如 <code>+8613900000000</code>）必须逐字符相同，HMAC 才会对得上。其次是验证码已过期或已被取走（阅后即焚）。</p>
+    <h3>取到的码是订单号/金额？</h3>
+    <p>通用提取是「第一个 4-8 位数字」的启发式。改用更精确的匹配：转发规则里只放行含「验证码」关键词的短信；或等 PR #1 合入后为通道配置模板提取。</p>
+    <h3>双卡手机两个号码怎么区分？</h3>
+    <p>每张卡建一个转发规则，模板里 <code>recipient</code> 分别写死两张卡的号码；通道模式下则建两个通道。取码时用对应号码的 HMAC 分别查询。</p>
+    <h3>安全注意事项</h3>
+    <ul>
+      <li>备用机只插专用 SIM 卡，不装其他业务应用；开启锁屏与远程查找</li>
+      <li><code>webhook_secret</code> 等同「向该号码注入验证码」的权限，泄漏立即更换（通道模式只需换对应通道）</li>
+      <li>生产环境建议给 <code>/api/v1/otp</code> 前面加网关层限流，防止 token 被暴力遍历</li>
+      <li>SmsForwarder 本身不上传隐私数据（开源可审计），但转发目标地址即本服务，请确认部署环境可信</li>
+    </ul>
+  </div>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <svg class="brand-logo" viewBox="0 0 512 512" aria-hidden="true">
+          <rect width="512" height="512" rx="116" fill="url(#lg)"/>
+          <path d="M120 200a40 40 0 0 1 40-40h192a40 40 0 0 1 40 40v84a40 40 0 0 1-40 40H236l-72 56v-56h-4a40 40 0 0 1-40-40z" fill="#fff" fill-opacity=".92"/>
+        </svg>
+        <span>SMSServer</span>
+      </div>
+      <div class="footer-meta">验证码中继 · 阅后即焚 · Go 1.21</div>
+      <div class="footer-links">
+        <a href="https://github.com/pppscn/SmsForwarder" rel="noopener">SmsForwarder 项目</a>
+        <a href="docs.html">接口文档</a>
+        <a href="index.html#tool">取码助手</a>
+      </div>
+    </div>
+  </footer>
+
+  <div class="toast" role="status"></div>
+  <script src="assets/js/tool.js"></script>
+</body>
+</html>

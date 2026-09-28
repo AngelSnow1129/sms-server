@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>接口文档 · SMSServer</title>
+  <meta name="description" content="SMSServer 接口文档：短信回调、验证码查询、SMSForward 通道回调的请求格式、鉴权方式与错误码。" />
+  <meta name="theme-color" content="#2563EB" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%232563EB'/%3E%3Cstop offset='100%25' stop-color='%230EA5E9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='512' height='512' rx='116' fill='url(%23b)'/%3E%3Cpath d='M120 200a40 40 0 0 1 40-40h192a40 40 0 0 1 40 40v84a40 40 0 0 1-40 40H236l-72 56v-56h-4a40 40 0 0 1-40-40z' fill='%23fff' fill-opacity='.92'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="assets/css/style.css" />
+</head>
+<body>
+
+  <header class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="index.html">
+        <svg class="brand-logo" viewBox="0 0 512 512" aria-hidden="true">
+          <defs>
+            <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#2563EB"/>
+              <stop offset="100%" stop-color="#0EA5E9"/>
+            </linearGradient>
+          </defs>
+          <rect width="512" height="512" rx="116" fill="url(#lg)"/>
+          <path d="M120 200a40 40 0 0 1 40-40h192a40 40 0 0 1 40 40v84a40 40 0 0 1-40 40H236l-72 56v-56h-4a40 40 0 0 1-40-40z" fill="#fff" fill-opacity=".92"/>
+        </svg>
+        <span>SMSServer</span>
+      </a>
+      <nav class="nav-links">
+        <a href="index.html#features">功能特性</a>
+        <a href="index.html#tool">取码助手</a>
+        <a href="smsforward.html">SMSForward 对接</a>
+        <a class="nav-cta" href="index.html">返回首页</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="doc">
+    <a class="back" href="index.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      返回首页
+    </a>
+
+    <h1>接口文档</h1>
+    <p class="lead">两个核心接口 + 一个通道回调。所有接口均为 POST；4xx 错误为纯文本，成功为 JSON。</p>
+
+    <h2 id="token-algorithm">token 计算方式</h2>
+    <p>取码接口的 <code>token</code> 是收件人号码的 HMAC 摘要，调用方与服务端共享 <code>HMAC_SECRET</code> 即可对账，服务端不需要保存明文手机号作索引：</p>
+    <pre><code>token = hex( HMAC-SHA256( key = HMAC_SECRET, message = 收件人手机号 ) )</code></pre>
+    <ul>
+      <li>消息体就是手机号字符串本身（建议带国家码，如 <code>+8613900000000</code>），不做其他预处理</li>
+      <li>输出为小写十六进制（64 字符）</li>
+      <li>可用<a href="index.html#tool">首页取码助手</a>在浏览器本地计算，或用命令行：
+        <pre><code>python3 -c "import hmac,hashlib;print(hmac.new(b'你的HMAC_SECRET',b'+8613900000000',hashlib.sha256).hexdigest())"</code></pre></li>
+    </ul>
+
+    <h2 id="webhook-sms">1. 短信回调</h2>
+    <pre><code>POST /api/v1/webhook/sms/{WEBHOOK_SECRET}</code></pre>
+    <p>路径最后一段即 <code>WEBHOOK_SECRET</code>，服务端用常量时间比较校验，防时序侧信道。校验通过立即返回 200，业务异步处理。</p>
+
+    <h3>请求体（JSON，上限 64 KiB）</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>字段</th><th>必填</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td><code>provider</code></td><td>否</td><td>供应商标识，如 <code>twilio</code>；仅用于落库记录</td></tr>
+          <tr><td><code>sender</code></td><td>否</td><td>发送方号码</td></tr>
+          <tr><td><code>recipient</code></td><td>是</td><td>接收方号码，缓存 key 的计算依据</td></tr>
+          <tr><td><code>body</code></td><td>是</td><td>短信原文，服务端从中提取验证码</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>响应</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>状态码</th><th>响应体</th><th>场景</th></tr></thead>
+        <tbody>
+          <tr><td>200</td><td><code>{"status":"ok"}</code></td><td>校验通过，已投递后台处理</td></tr>
+          <tr><td>401</td><td><code>unauthorized</code>（纯文本）</td><td>token 为空、不匹配或路径含多余层级</td></tr>
+          <tr><td>400</td><td><code>invalid json</code>（纯文本）</td><td>请求体不是合法 JSON 或超过 64 KiB</td></tr>
+          <tr><td>405</td><td><code>method not allowed</code>（纯文本）</td><td>非 POST</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>验证码提取规则</h3>
+    <p>正则 <code>\b(\d{4,8})\b</code> 取第一个匹配的 4-8 位数字。这是通用启发式：短信中先于验证码出现的 4-8 位数字（订单号、金额等）可能被误提。同号新码直接覆盖旧码，旧码立即失效。需要更精准的提取时，用下面的 SMSForward 通道 + 模板机制。</p>
+
+    <h2 id="otp">2. 查询验证码</h2>
+    <pre><code>POST /api/v1/otp
+{"token": "&lt;按上文算法计算的 HMAC 十六进制&gt;"}</code></pre>
+    <p><code>token</code> 会先做首尾空白裁剪；为空返回 <code>400 missing token</code>。</p>
+
+    <h3>响应</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>响应体</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td><code>{"status":"success","code":"123456"}</code></td><td>命中；该码立即失效（阅后即焚）</td></tr>
+          <tr><td><code>{"status":"pending"}</code></td><td>未命中：未收到短信、已过期、已被取走或 key 不匹配（也是 200）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      <span>未命中也返回 200：调用方按 <code>status</code> 字段轮询即可，无需按状态码分支。同一验证码不会被取走两次；重试同一次查询不会重复得到结果。</span>
+    </div>
+
+    <h2 id="smsforward">3. SMSForward 通道回调</h2>
+    <pre><code>POST /api/v1/webhook/smsforward/{channel_id}/{token}</code></pre>
+    <p>为安卓转发工具（如 SmsForwarder）提供的多通道入口：每个通道独立 <code>webhook_secret</code>，可绑定提取模板与来源白名单，避免所有设备共享同一密钥。</p>
+    <p>请求体在短信回调字段基础上多一个 <code>source</code>（设备/来源标识，配置了 <code>source_whitelist</code> 时必填且必须命中）。</p>
+    <div class="note warn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <span>该接口随上游 PR #1（smsforward 通道 + 模板提取）提供，<strong>当前开发分支尚未合入</strong>；可用性与配置格式以合并后的仓库文档为准。应用侧配置步骤见 <a href="smsforward.html">SMSForward 对接教程</a>。</span>
+    </div>
+
+    <h2 id="deploy">部署形态与配置</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>项</th><th>Cloudflare 一键部署</th><th>自托管（Docker / 二进制）</th></tr></thead>
+        <tbody>
+          <tr><td>入口</td><td><a href="https://deploy.workers.cloudflare.com/?url=https://github.com/AngelSnow1129/WebHookServer/tree/main/cloudflare">部署按钮</a>（向导填两个密钥）</td><td><code>docker build</code> 或 <code>go build</code>，环境变量注入</td></tr>
+          <tr><td>验证码存储</td><td>D1（唯一事实源，自动建表）</td><td><code>DB_DRIVER=mysql</code>（默认，内存缓存）或 <code>DB_DRIVER=sqlite</code>（<code>SQLITE_PATH</code> 持久化）</td></tr>
+          <tr><td>公共必填</td><td colspan="2"><code>HMAC_SECRET</code>、<code>WEBHOOK_SECRET</code>（<code>openssl rand -hex 32</code> 生成）</td></tr>
+          <tr><td>有效期</td><td><code>OTP_TTL_SECONDS</code>（秒，默认 300）</td><td><code>OTP_CACHE_TTL_MINUTES</code>（分钟，默认 5）</td></tr>
+          <tr><td>清理周期</td><td>Cron 每 30 分钟（固定）</td><td><code>CLEANUP_INTERVAL_SECONDS</code>（秒，默认 30）</td></tr>
+          <tr><td>监听地址</td><td>由 Workers 分配</td><td><code>SERVER_ADDR</code>（默认 <code>:53340</code>）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>自托管启动前两个密钥必填，为空立即退出；完整变量清单见仓库 <code>.env.example</code> 与 README。</p>
+
+    <h2 id="limits">通用限制</h2>
+    <ul>
+      <li>请求体上限 64 KiB，超出返回 400</li>
+      <li>HTTP 超时：读 5s、写 5s、空闲 120s（自托管）</li>
+      <li>异步接口返回 200 不代表短信已入库，写库失败仅记录服务端日志</li>
+      <li>日志不包含验证码明文、完整 token 与手机号明文，仅记录 <code>recipient_hash</code> 前 8 位</li>
+    </ul>
+
+    <h2 id="faq">常见问题</h2>
+    <h3>取码一直 pending？</h3>
+    <p>按顺序排查：token 是否用同一 <code>HMAC_SECRET</code> 和完全相同的号码字符串计算（空格、大小写、有无 +86 都会导致不一致）；验证码是否已过期或已被取走（阅后即焚，第二次查必 pending）。</p>
+    <h3>网页算出的 token 与服务端不一致？</h3>
+    <p>用首页助手生成的 python3 对照命令在部署机上再算一次：两者一致说明服务正常，问题出在调用方密钥/号码；不一致说明服务端密钥与浏览器里填的不同。</p>
+    <h3>模拟短信返回 401？</h3>
+    <p><code>WEBHOOK_SECRET</code> 作为路径最后一段传输，注意 URL 编码与多余层级（<code>.../sms/密钥/extra</code> 会按 401 拒绝）。</p>
+  </div>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <svg class="brand-logo" viewBox="0 0 512 512" aria-hidden="true">
+          <rect width="512" height="512" rx="116" fill="url(#lg)"/>
+          <path d="M120 200a40 40 0 0 1 40-40h192a40 40 0 0 1 40 40v84a40 40 0 0 1-40 40H236l-72 56v-56h-4a40 40 0 0 1-40-40z" fill="#fff" fill-opacity=".92"/>
+        </svg>
+        <span>SMSServer</span>
+      </div>
+      <div class="footer-meta">验证码中继 · 阅后即焚 · Go 1.21</div>
+      <div class="footer-links">
+        <a href="https://github.com/AngelSnow1129/WebHookServer" rel="noopener">GitHub 仓库</a>
+        <a href="smsforward.html">SMSForward 对接</a>
+        <a href="index.html#tool">取码助手</a>
+      </div>
+    </div>
+  </footer>
+
+  <div class="toast" role="status"></div>
+  <script src="assets/js/tool.js"></script>
+</body>
+</html>

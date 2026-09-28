@@ -1,10 +1,14 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
+
+	"smsserver/model"
 )
 
 // Config 应用配置结构体
@@ -31,6 +35,10 @@ type Config struct {
 	WebhookSecret   string        // Webhook鉴权密钥
 	OTPCacheTTL     time.Duration // 验证码缓存过期时间
 	CleanupInterval time.Duration // 后台清理间隔
+
+	// 模板化验证码提取与 smsforward 通道（来自上游 main 的特性）
+	OTPTemplates       []model.OTPTemplate
+	SMSForwardChannels map[string]model.SMSForwardChannel
 }
 
 // 驱动名常量。用常量而非裸字符串，避免接线处拼错后静默回落到默认分支。
@@ -63,11 +71,13 @@ func Load() *Config {
 		MySQLDSN:   getEnv("MYSQL_DSN", "user:password@tcp(127.0.0.1:3306)/smsdb?parseTime=true&loc=Local"),
 		SQLitePath: getEnv("SQLITE_PATH", "./sms.db"),
 		// 默认 auto：由 DBDriver 推导，保证不设 OTP_STORE 时行为与引入该变量前完全一致
-		OTPStore:        getEnv("OTP_STORE", StoreAuto),
-		HMACSecret:      getEnv("HMAC_SECRET", ""),
-		WebhookSecret:   getEnv("WEBHOOK_SECRET", ""),
-		OTPCacheTTL:     getMinutesEnv("OTP_CACHE_TTL_MINUTES", 5),
-		CleanupInterval: getSecondsEnv("CLEANUP_INTERVAL_SECONDS", 30),
+		OTPStore:           getEnv("OTP_STORE", StoreAuto),
+		HMACSecret:         getEnv("HMAC_SECRET", ""),
+		WebhookSecret:      getEnv("WEBHOOK_SECRET", ""),
+		OTPCacheTTL:        getMinutesEnv("OTP_CACHE_TTL_MINUTES", 5),
+		CleanupInterval:    getSecondsEnv("CLEANUP_INTERVAL_SECONDS", 30),
+		OTPTemplates:       loadOTPTemplates(),
+		SMSForwardChannels: loadSMSForwardChannels(),
 	}
 }
 
@@ -108,6 +118,74 @@ func (c *Config) ResolveOTPStore() (string, error) {
 		return "", fmt.Errorf("OTP_STORE=%q 非法，可选值为 %s|%s|%s|%s",
 			c.OTPStore, StoreAuto, StoreMemory, StoreSQLite, StoreMySQL)
 	}
+}
+
+func loadOTPTemplates() []model.OTPTemplate {
+	raw := strings.TrimSpace(os.Getenv("OTP_TEMPLATES_JSON"))
+	if raw == "" {
+		return defaultOTPTemplates()
+	}
+
+	var templates []model.OTPTemplate
+	if err := json.Unmarshal([]byte(raw), &templates); err != nil {
+		return defaultOTPTemplates()
+	}
+	if len(templates) == 0 {
+		return defaultOTPTemplates()
+	}
+	return templates
+}
+
+func defaultOTPTemplates() []model.OTPTemplate {
+	return []model.OTPTemplate{
+		{
+			ID:        "cn_numeric",
+			Keywords:  []string{"验证码", "动态码", "校验码"},
+			CodeType:  "numeric",
+			MinLength: 4,
+			MaxLength: 8,
+		},
+		{
+			ID:        "en_numeric",
+			Keywords:  []string{"verification code", "code", "otp", "passcode"},
+			CodeType:  "numeric",
+			MinLength: 4,
+			MaxLength: 8,
+		},
+		{
+			ID:        "en_alnum",
+			Keywords:  []string{"verification code", "code", "otp", "passcode"},
+			CodeType:  "alnum",
+			MinLength: 4,
+			MaxLength: 10,
+		},
+	}
+}
+
+func loadSMSForwardChannels() map[string]model.SMSForwardChannel {
+	raw := strings.TrimSpace(os.Getenv("SMSFORWARD_CHANNELS_JSON"))
+	if raw == "" {
+		return map[string]model.SMSForwardChannel{}
+	}
+
+	var channels []model.SMSForwardChannel
+	if err := json.Unmarshal([]byte(raw), &channels); err != nil {
+		return map[string]model.SMSForwardChannel{}
+	}
+
+	result := make(map[string]model.SMSForwardChannel, len(channels))
+	for _, ch := range channels {
+		id := strings.TrimSpace(ch.ChannelID)
+		if id == "" {
+			continue
+		}
+		ch.ChannelID = id
+		if ch.Provider == "" {
+			ch.Provider = "smsforward"
+		}
+		result[id] = ch
+	}
+	return result
 }
 
 // getEnv 获取环境变量，不存在时返回默认值

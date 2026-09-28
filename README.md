@@ -189,6 +189,8 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/v1/otp" -d "{\"token\":\"$TOKEN\"}"
 | `WEBHOOK_SECRET` | **是** | 无 | — | webhook 鉴权密钥。为空时启动失败 |
 | `OTP_CACHE_TTL_MINUTES` | 否 | `5` | **分钟** | 验证码有效期。设置为 `5` 即 5 分钟 |
 | `CLEANUP_INTERVAL_SECONDS` | 否 | `30` | **秒** | 后台清理间隔。不设置即为 30 秒 |
+| `OTP_TEMPLATES_JSON` | 否 | 内置默认模板 | — | 模板化提取配置(JSON),支持中英文与字母数字验证码 |
+| `SMSFORWARD_CHANNELS_JSON` | 否 | 空 | — | smsforward 通道配置(JSON),用于多通道鉴权/开关/白名单 |
 
 ### `DB_DRIVER`:mysql 与 sqlite 的差异
 
@@ -266,6 +268,21 @@ POST /api/v1/webhook/sms/{token}
 | 400 | `invalid json`(纯文本) | 请求体不是合法 JSON,或超过 64 KiB |
 | 405 | `method not allowed`(纯文本) | 非 POST 方法 |
 
+### 1b. SMSForward 多通道回调
+
+```
+POST /api/v1/webhook/smsforward/{channel_id}/{token}
+```
+
+| 项 | 说明 |
+|---|---|
+| `{channel_id}` | 通道 ID，来自 `SMSFORWARD_CHANNELS_JSON` |
+| `{token}` | 该通道的 `webhook_secret` |
+| 请求体 | JSON，支持 `provider/sender/recipient/body/source` |
+| 白名单 | 若通道配置 `source_whitelist`，则 `source` 必须命中 |
+
+详细示例与配置请见：`docs/WIKI_SMSFORWARD_TEMPLATES.md`。
+
 由于是异步处理,**返回 200 不代表短信已入库**,写库失败仅体现在服务端日志中。401 与 400 均会写入服务端日志(级别语义见 `docs/LOGGING.md`),便于识别密钥爆破。
 
 ### 2. 查询验证码
@@ -327,18 +344,23 @@ KEY `idx_recipient_time` (`recipient`,`created_at` DESC)
 
 ## 验证码提取规则
 
-`service/otp_service.go` 使用正则 `\b(\d{4,8})\b`,取**第一个**匹配到的 4-8 位数字。
+`service/otp_service.go` 当前采用三层策略：
+
+1. 模板强匹配（关键词邻近窗口）
+2. 模板弱匹配（全短信匹配）
+3. 回退数字正则 `\b(\d{4,8})\b`
 
 | 短信内容 | 提取结果 |
 |---|---|
 | `【某某】您的验证码是123456，5分钟内有效。` | `123456` |
 | `Your code is 12345` | `12345` |
+| `Order 20240921123456. Your verification code is A1B2C3` | `A1B2C3` |
 | `您的验证码：123456` | `123456` |
 | `验证码123456` | `123456` |
 | `订单号20240921123456，验证码为9876` | `9876` |
 | `您的话费余额不足，请及时充值。` | 无(不写入缓存,但原始短信仍落库) |
 
-该规则是通用启发式,**没有针对验证码的语义识别**:短信中任何先于验证码出现的 4-8 位数字(订单号、金额、日期片段等)都可能被误当作验证码,并覆盖该号码当前的验证码缓存。若供应商模板固定,建议改为按模板匹配。
+模板命中时会记录模板 ID、提取状态与置信度；短信记录新增 `channel_id/template_id/extraction_status/extraction_confidence` 字段，便于按通道和模板排查命中率与误提。
 
 ## 日志
 
@@ -389,7 +411,7 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:3306)/smsdb_test?parseTime=true&loc=Loca
 
 | 工作流 | 触发条件 | 内容 |
 |---|---|---|
-| [`ci.yml`](.github/workflows/ci.yml) | push 到 `main`、所有 PR、手动 | `gofmt` → `go mod tidy` 幂等性 → `go vet` → `go build` → 单测(`-race -shuffle=on` + 覆盖率)→ **MySQL 8.0 集成测试** → 5 平台交叉编译 |
+| [`ci.yml`](.github/workflows/ci.yml) | push 到 `main`、所有 PR、手动 | `gofmt` → `go mod tidy` 幂等性 → `go vet` → `go build` → 单测(`-race -shuffle=on` + 覆盖率)→ **MySQL 8.0 集成测试** → 5 平台交叉编译并上传编译产物(Artifacts) |
 | [`cloudflare.yml`](.github/workflows/cloudflare.yml) | `cloudflare/**` 变更 push 到 `main` 或发起 PR、手动 | 在独立 module 中执行 `gofmt` → `go vet` → `GOOS=js GOARCH=wasm go build` → 单测 |
 | [`release.yml`](.github/workflows/release.yml) | 推送 `v*.*.*` tag、手动 | 发布前门禁 → 5 平台编译并打包 → 生成 `SHA256SUMS` → 创建 GitHub Release → 推送多架构镜像到 GHCR |
 

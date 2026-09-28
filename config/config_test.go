@@ -14,6 +14,8 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("WEBHOOK_SECRET", "")
 	t.Setenv("OTP_CACHE_TTL_MINUTES", "")
 	t.Setenv("CLEANUP_INTERVAL_SECONDS", "")
+	t.Setenv("OTP_TEMPLATES_JSON", "")
+	t.Setenv("SMSFORWARD_CHANNELS_JSON", "")
 
 	cfg := Load()
 
@@ -26,6 +28,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.CleanupInterval != 30*time.Second {
 		t.Errorf("CleanupInterval = %v，期望 30s", cfg.CleanupInterval)
 	}
+	if len(cfg.OTPTemplates) == 0 {
+		t.Fatal("默认模板不能为空")
+	}
+	if len(cfg.SMSForwardChannels) != 0 {
+		t.Fatalf("默认 smsforward 通道数量=%d，期望 0", len(cfg.SMSForwardChannels))
+	}
 }
 
 func TestLoadValuesFromEnv(t *testing.T) {
@@ -34,6 +42,8 @@ func TestLoadValuesFromEnv(t *testing.T) {
 	t.Setenv("WEBHOOK_SECRET", "webhook-secret")
 	t.Setenv("OTP_CACHE_TTL_MINUTES", "5")
 	t.Setenv("CLEANUP_INTERVAL_SECONDS", "30")
+	t.Setenv("OTP_TEMPLATES_JSON", `[{"id":"custom","keywords":["code"],"code_type":"alnum","min_length":6,"max_length":6}]`)
+	t.Setenv("SMSFORWARD_CHANNELS_JSON", `[{"channel_id":"android-main","webhook_secret":"abc123","enabled":true,"provider":"smsforward","template_ids":["custom"],"source_whitelist":["pixel-8"]}]`)
 
 	cfg := Load()
 
@@ -52,6 +62,34 @@ func TestLoadValuesFromEnv(t *testing.T) {
 	}
 	if cfg.CleanupInterval != 30*time.Second {
 		t.Errorf("CleanupInterval = %v，期望 30s", cfg.CleanupInterval)
+	}
+	if len(cfg.OTPTemplates) != 1 || cfg.OTPTemplates[0].ID != "custom" {
+		t.Fatalf("模板加载失败: %+v", cfg.OTPTemplates)
+	}
+	ch, ok := cfg.SMSForwardChannels["android-main"]
+	if !ok {
+		t.Fatal("smsforward 通道 android-main 未加载")
+	}
+	if ch.WebhookSecret != "abc123" || !ch.Enabled || ch.Provider != "smsforward" {
+		t.Fatalf("smsforward 通道配置异常: %+v", ch)
+	}
+}
+
+func TestLoadOTPTemplatesFallbackToDefaultOnInvalidJSON(t *testing.T) {
+	t.Setenv("OTP_TEMPLATES_JSON", `{bad json`)
+
+	cfg := Load()
+	if len(cfg.OTPTemplates) == 0 {
+		t.Fatal("非法 JSON 时应回退默认模板")
+	}
+}
+
+func TestLoadSMSForwardChannelsFallbackOnInvalidJSON(t *testing.T) {
+	t.Setenv("SMSFORWARD_CHANNELS_JSON", `{bad json`)
+
+	cfg := Load()
+	if len(cfg.SMSForwardChannels) != 0 {
+		t.Fatalf("非法 JSON 时应回退为空 map，实际=%d", len(cfg.SMSForwardChannels))
 	}
 }
 

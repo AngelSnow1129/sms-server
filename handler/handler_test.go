@@ -26,10 +26,12 @@ type asyncCall struct {
 	sender    string
 	recipient string
 	body      string
+	channelID string
+	source    string
 }
 
-func (f *fakeService) ProcessIncomingSMSAsync(provider, sender, recipient, body string, _ time.Time) {
-	f.asyncCalls = append(f.asyncCalls, asyncCall{provider, sender, recipient, body})
+func (f *fakeService) ProcessIncomingSMSAsync(provider, sender, recipient, body, channelID, source string, _ time.Time) {
+	f.asyncCalls = append(f.asyncCalls, asyncCall{provider, sender, recipient, body, channelID, source})
 }
 
 func (f *fakeService) GetOTP(token string) (string, bool) {
@@ -38,7 +40,25 @@ func (f *fakeService) GetOTP(token string) (string, bool) {
 }
 
 func newTestHandler(svc *fakeService) *Handler {
-	return NewHandler(svc, testWebhookSecret)
+	return NewHandler(svc, testWebhookSecret, nil)
+}
+
+func newSMSForwardHandler(svc *fakeService) *Handler {
+	return NewHandler(svc, testWebhookSecret, map[string]model.SMSForwardChannel{
+		"android-main": {
+			ChannelID:       "android-main",
+			WebhookSecret:   "smsfwd-secret",
+			Enabled:         true,
+			Provider:        "smsforward",
+			TemplateIDs:     []string{"en_alnum"},
+			SourceWhitelist: []string{"pixel-8"},
+		},
+		"disabled-channel": {
+			ChannelID:     "disabled-channel",
+			WebhookSecret: "disabled-secret",
+			Enabled:       false,
+		},
+	})
 }
 
 func postWebhook(h *Handler, path, body string) *httptest.ResponseRecorder {
@@ -200,6 +220,83 @@ func TestExtractWebhookToken(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := extractWebhookToken(tt.path); got != tt.want {
 				t.Errorf("extractWebhookToken(%q) = %q，期望 %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractSMSForwardPath(t *testing.T) {
+	tests := []struct {
+		name        string
+		path        string
+		wantChannel string
+		wantToken   string
+	}{
+		{"正常", SMSForwardPathPrefix + "android-main/smsfwd-secret", "android-main", "smsfwd-secret"},
+		{"缺 token", SMSForwardPathPrefix + "android-main", "", ""},
+		{"多层级", SMSForwardPathPrefix + "android-main/smsfwd-secret/extra", "", ""},
+		{"前缀不匹配", "/api/v1/webhook/smsforwardX/android-main/s", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ch, tk := extractSMSForwardPath(tt.path)
+			if ch != tt.wantChannel || tk != tt.wantToken {
+				t.Fatalf("extractSMSForwardPath(%q)=(%q,%q), want=(%q,%q)", tt.path, ch, tk, tt.wantChannel, tt.wantToken)
+			}
+		})
+	}
+}
+
+func TestWebhookSMSForward(t *testing.T) {
+	svc := &fakeService{}
+	h := newSMSForwardHandler(svc)
+	body := `{"sender":"+8613800000000","recipient":"+8613900000000","body":"Your code is A1B2C3","source":"pixel-8"}`
+	req := httptest.NewRequest(http.MethodPost, SMSForwardPathPrefix+"android-main/smsfwd-secret", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.WebhookSMSForward(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码=%d，期望 200", rec.Code)
+	}
+	if len(svc.asyncCalls) != 1 {
+		t.Fatalf("异步调用次数=%d，期望 1", len(svc.asyncCalls))
+	}
+	got := svc.asyncCalls[0]
+	if got.channelID != "android-main" || got.source != "pixel-8" {
+		t.Fatalf("通道或来源透传失败: %+v", got)
+	}
+	if got.provider != "smsforward" {
+		t.Fatalf("provider 回填失败: %q", got.provider)
+	}
+}
+
+func TestWebhookSMSForwardRejectsInvalidCases(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		body       string
+		wantStatus int
+	}{
+		{"错误密钥", SMSForwardPathPrefix + "android-main/wrong", `{}`, http.StatusUnauthorized},
+		{"通道不存在", SMSForwardPathPrefix + "missing/smsfwd-secret", `{}`, http.StatusUnauthorized},
+		{"通道禁用", SMSForwardPathPrefix + "disabled-channel/disabled-secret", `{}`, http.StatusUnauthorized},
+		{"来源不在白名单", SMSForwardPathPrefix + "android-main/smsfwd-secret", `{"source":"unknown","body":"code A1B2C3"}`, http.StatusUnauthorized},
+		{"非法json", SMSForwardPathPrefix + "android-main/smsfwd-secret", `{bad`, http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &fakeService{}
+			h := newSMSForwardHandler(svc)
+			req := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+
+			h.WebhookSMSForward(rec, req)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("状态码=%d，期望=%d", rec.Code, tt.wantStatus)
+			}
+			if tt.wantStatus != http.StatusOK && len(svc.asyncCalls) != 0 {
+				t.Fatal("失败请求不应投递异步处理")
 			}
 		})
 	}

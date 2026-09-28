@@ -27,8 +27,20 @@ type SMSRecord struct {
 	// 原始短信内容
 	Body string `gorm:"type:text;not null"`
 
+	// 接收通道（如 smsforward 的 channel_id）
+	ChannelID string `gorm:"size:64;not null;default:''"`
+
 	// 解析出的验证码
 	ExtractedCode *string `gorm:"size:32"`
+
+	// 命中的模板 ID（未命中时为空）
+	TemplateID *string `gorm:"size:64"`
+
+	// 提取状态（如 template_strong_extracted / template_conflict / fallback_extracted / not_found）
+	ExtractionStatus string `gorm:"size:64;not null;default:''"`
+
+	// 提取置信度（strong / weak / fallback / none）
+	ExtractionConfidence string `gorm:"size:16;not null;default:''"`
 
 	// 接收时间
 	ReceivedAt time.Time `gorm:"type:datetime(3);not null"`
