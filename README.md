@@ -56,6 +56,7 @@ SMSServer/
 ├── model/sms.go                     数据模型(含索引标签)、HMAC 工具函数
 ├── docs/LOGGING.md                  运行日志规范
 ├── docs/HANDOVER.md                 交接文档:本轮改动的设计取舍与验证记录
+├── docs/INTEGRATION.md              Webhook 对接指南:来源方/取码方接入、token 计算、轮询与联调
 ├── cloudflare/                      Cloudflare Workers + D1 部署形态(自包含子目录,见 cloudflare/README.md)
 ├── .github/workflows/ci.yml         CI:格式/静态检查/单测/集成测试/交叉编译
 ├── .github/workflows/cloudflare.yml Cloudflare:格式/静态检查/WASM 构建/单测
@@ -230,6 +231,8 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:3306)/smsdb_test?parseTime=true&loc=Loca
 两个时间变量分别由 `config.getMinutesEnv` / `config.getSecondsEnv` 解析,单位与变量名一致,且非法值(非整数)会回退到默认值。相关行为由 `config/config_test.go` 覆盖。
 
 ## 接口文档
+
+对接本服务(含短信来源方与取码方的完整接入流程、token 计算示例、轮询建议与联调清单)请看 [docs/INTEGRATION.md](docs/INTEGRATION.md)。以下为接口参考:
 
 服务使用 Go 标准库 `net/http`,超时配置为:读 5s、写 5s、空闲 120s。请求体上限为 `64 KiB`(`handler.maxBodyBytes`),超出返回 400。
 

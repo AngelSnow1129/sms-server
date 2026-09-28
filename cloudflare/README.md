@@ -49,6 +49,8 @@ curl -s -X POST "https://sms-server.<你的子域>.workers.dev/api/v1/otp" -d "{
 
 ## 接口（与自托管版协议一致）
 
+完整的对接流程（含取码 token 的 HMAC 计算示例、轮询建议、联调自检清单）见 [docs/INTEGRATION.md](../docs/INTEGRATION.md)。
+
 | 接口 | 行为 |
 |---|---|
 | `POST /api/v1/webhook/sms/{WEBHOOK_SECRET}` | 提取验证码写入 D1；同号新码覆盖旧码；未提取到验证码不写入 |
