@@ -1,7 +1,15 @@
-// Package sqlite 提供基于 SQLite 的 store.Store 实现，驱动为 modernc.org/sqlite（纯 Go，无 CGO）。
+// Package sqlite 提供基于 SQLite 的 store.Store 实现，驱动为 glebarez/go-sqlite
+// （modernc.org/sqlite 的纯 Go fork，无 CGO）。
 //
 // 为什么不用 gorm.io/driver/sqlite：它底层是 mattn/go-sqlite3，需要 CGO，
 // 与本项目 CGO_ENABLED=0 + distroless/static 的构建链路不兼容（见 Dockerfile）。
+//
+// 为什么是 glebarez/go-sqlite 而不是直接 modernc.org/sqlite：
+// DB_DRIVER=sqlite 模式下短信归档走 GORM 的 github.com/glebarez/sqlite，
+// 它的底层驱动正是 glebarez/go-sqlite。若本包直接 import modernc.org/sqlite，
+// 两个包会在 init 时各注册一次名为 "sqlite" 的 database/sql 驱动，
+// 二进制一启动就 panic（sql: Register called twice for driver sqlite）——实测踩过。
+// 与 GORM 侧共用同一 fork 才能保证全进程只注册一次。
 //
 // 与内存实现 cache.OTPCache 的语义差异只有一处：读取成功后记录不物理删除，
 // 而是把 status 从 pending 翻成 read（软删除），保留 readRetentionSeconds 供对账，
@@ -18,7 +26,7 @@ import (
 
 	"smsserver/store"
 
-	_ "modernc.org/sqlite" // 注册 database/sql 的 sqlite 驱动（纯 Go，无需 CGO）
+	_ "github.com/glebarez/go-sqlite" // 注册 database/sql 驱动名 "sqlite"（纯 Go；与 GORM 侧 glebarez/sqlite 共用同一注册，见包注释）
 )
 
 // 编译期断言：Store 必须满足 store.Store，
@@ -69,14 +77,32 @@ type Store struct {
 	ttl time.Duration
 }
 
+// dsnPragmas 给所有 SQLite 连接追加的 pragma：
+//   - busy_timeout(5000)：写锁被占时最多等 5s 再报错。DB_DRIVER=sqlite 时
+//     验证码存储与短信归档共享同一连接池，写事务由池串行化，但共享池之外
+//     仍可能存在别的进程/连接（如运维用 sqlite3 CLI 查库），靠它兜底 SQLITE_BUSY；
+//   - journal_mode(WAL)：读写不互斥、崩溃后更不易损坏。落盘的 -wal/-shm 文件
+//     已被仓库根 .gitignore 覆盖（*.db-wal / *.db-shm）。
+const dsnPragmas = "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+
+// SQLiteDSN 返回带统一 pragma 的 SQLite 连接串。
+// 本包自开连接（New）与 main 的 GORM 连接（DB_DRIVER=sqlite 的短信归档）
+// 共用同一个库文件，必须持有相同的锁与日志模式配置，故从这里统一取 DSN。
+func SQLiteDSN(path string) string {
+	return path + dsnPragmas
+}
+
 // New 打开 path 处的 SQLite 库（不存在则创建），建表并返回一个 Store。
 // ttl 决定 Set 写入的 expires_at。构造函数可以返回 error，
 // 但 store.Store 的方法签名被上层锁死不带 error，失败只能在内部记日志。
 //
+// 自建连接池并压到单连接：SQLite 是单写者模型，由池串行化写请求，
+// 规避并发写报 "database is locked"。
+//
 // 连接串刻意不使用 :memory:：内存库是每个连接各一份，database/sql 的连接池会让
 // 写入落到与读取不同的库上。测试请用临时文件（t.TempDir()），生产用 SQLITE_PATH。
 func New(path string, ttl time.Duration) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", SQLiteDSN(path))
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +119,23 @@ func New(path string, ttl time.Duration) (*Store, error) {
 	}
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
+		return nil, fmt.Errorf("初始化 SQLite 表结构失败: %w", err)
+	}
+	return &Store{db: db, ttl: ttl}, nil
+}
+
+// NewFromDB 在调用方提供的 *sql.DB 上初始化表结构并返回 Store。
+// 连接池参数归调用方所有，本构造函数不做任何调整：
+// main 在 DB_DRIVER=sqlite 模式下让本存储与短信归档的 GORM 共享同一个
+// 单连接池（同一文件），由池串行化全部写事务（见 main.go 连接注释）。
+func NewFromDB(db *sql.DB, ttl time.Duration) (*Store, error) {
+	if db == nil {
+		return nil, errors.New("SQLite 验证码存储需要一个非 nil 的 *sql.DB")
+	}
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("SQLite 连接不可用: %w", err)
+	}
+	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("初始化 SQLite 表结构失败: %w", err)
 	}
 	return &Store{db: db, ttl: ttl}, nil

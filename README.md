@@ -52,6 +52,7 @@ SMSServer/
 ├── store/sqlite/sqlite_store.go     验证码存储的 SQLite 实现(纯 Go 驱动,软删除保留 10 分钟)
 ├── store/mysql/mysql_store.go       验证码存储的 MySQL 实现(与 D1 同为 Unix 秒,多副本共享)
 ├── repository/sms_repo.go           MySQL 仓储层(GORM)
+├── repository/sqlite_repo.go        SQLite 仓储层(影子模型建表,DML 复用 model.SMSRecord)
 ├── repository/integration_test.go   MySQL 集成测试(需 -tags=integration)
 ├── model/sms.go                     数据模型(含索引标签)、HMAC 工具函数
 ├── docs/LOGGING.md                  运行日志规范
@@ -195,19 +196,21 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/v1/otp" -d "{\"token\":\"$TOKEN\"}"
 
 ### `DB_DRIVER`:mysql 与 sqlite 的差异
 
-`DB_DRIVER` 是唯一的后端开关,接线集中在 `main.go` 的 `newOTPStore` / `newSMSRepository`。默认 `mysql`,**不设置时行为与引入 sqlite 前完全一致**。
+`DB_DRIVER` 决定短信记录的落库后端,接线集中在 `main.go` 的 `newOTPStore` / `newSMSRepository`。默认 `mysql`,**不设置时行为与引入 sqlite 前完全一致**。验证码的存放位置另由 `OTP_STORE` 决定(见下节),二者互相独立。
 
 | 维度 | `mysql`(默认) | `sqlite` |
 |---|---|---|
 | MySQL 连接 | 启动时连接并 `AutoMigrate` | **完全不连接 MySQL**,无 MySQL 也能启动 |
-| 短信原文(`sms_records`) | 落库 MySQL | **不持久化**(`Create` 空实现,启动日志会说明) |
-| 验证码存储 | 内存(`cache.OTPCache`) | SQLite 表 `otps` |
+| 短信原文(`sms_records`) | 落库 MySQL | **落库 SQLite**(与验证码同一个库文件,经影子模型建表) |
+| 验证码存储(默认 `OTP_STORE=auto` 时) | 内存(`cache.OTPCache`) | SQLite 表 `otps` |
 | 重启后验证码 | 丢失 | 未过期的仍在 |
 | 读取后 | 物理删除 | **软删除**:`status='read'` + 写 `read_at`,保留 10 分钟供对账,再由清理协程物理删除 |
 
-> `sqlite` 模式下**短信记录不落库**是一个已知的功能缺口:仓储层 `repository.SMSRepository` 依赖 `*gorm.DB` 与 MySQL 方言,纯 Go SQLite 驱动未在本轮接入。若你需要短信原文留存,请用 `mysql` 模式。
+`sqlite` 模式的两个模块(验证码存储 + 短信归档)**共享同一个单连接池**:SQLite 是单写者模型,由池串行化全部写事务,并以 `busy_timeout(5000)` + `journal_mode(WAL)` 兜底并发(落库行为已做端到端实证:webhook 后 `sms_records` 与 `otps` 同库可见,`PRAGMA journal_mode` 返回 `wal`)。
 
-SQLite 实现使用纯 Go 驱动 `modernc.org/sqlite`(无 CGO),与 `CGO_ENABLED=0` + distroless 镜像兼容。
+> 实现注意(改动前必读):直接对 `model.SMSRecord` 做 AutoMigrate 会在 SQLite 上报语法错误——其标签含 MySQL 专有的 `default:CURRENT_TIMESTAMP(3)`。SQLite 分支走 `repository/sqlite_repo.go` 的影子模型建表(列名逐列一致,仅 DDL 方言不同),DML 仍直接读写 `model.SMSRecord`。
+
+SQLite 驱动统一用 `github.com/glebarez/go-sqlite`(modernc 的纯 Go fork,无 CGO):验证码存储(`store/sqlite`)与短信归档的 GORM 驱动(`github.com/glebarez/sqlite`)共用它,**全进程只注册一次 `sqlite` 驱动名**——若两半混用 modernc 与 glebarez,init 时会重复注册直接 panic(实测踩过)。
 
 ### `OTP_STORE`:验证码存在哪里
 

@@ -44,8 +44,9 @@
 当前在 **`cloudflare` 分支**，与 `origin/main` 已分叉于 `0c77cbe`：
 
 ```
-0c77cbe ──┬── 10d7c8e ── 14671cf ── fb24e36   (cloudflare, HEAD：本轮改动)
-          └── 2cce4f4 ── 562401b ── df633db   (origin/main：smsforward 特性, PR #1)
+0c77cbe ──┬── 10d7c8e ── 14671cf ── fb24e36 ── f3efd61 ── 2318146 ── cb31b9f ── (后续 docs 提交)
+          │            （cloudflare：CF 形态/SQLite/MySQL/对接文档/按钮修正/合并 main/验证报告）
+          └── 2cce4f4 ── 562401b ── df633db   (origin/main：smsforward 特性, PR #1, 已于 cb31b9f 合入)
 ```
 
 | 侧 | 提交 | 内容 |
@@ -96,15 +97,13 @@ main → handler → service → {store, repository} → model
 | 维度 | `mysql`（默认） | `sqlite` |
 |---|---|---|
 | MySQL 连接 | 启动即连接并 `AutoMigrate` | **完全不连接**，无 MySQL 也能启动 |
-| 短信原文 `sms_records` | 落库 MySQL | **不持久化**（空实现，见下） |
+| 短信原文 `sms_records` | 落库 MySQL | **落库 SQLite**（与验证码同一个库文件） |
 | 验证码存储 | 内存 `cache.OTPCache` | SQLite `store/sqlite` |
 | 重启后验证码 | 丢失 | 未过期的仍在 |
 | 读取后 | 物理删除 | **软删除**：`status='read'` + 写 `read_at`，保留 10 分钟供对账 |
 | 物理清理 | `Cleanup` 清过期项 | `Cleanup` 清「已读超 600s」+「未读已过期」两类 |
 
-**已知缺口：`sqlite` 模式下短信记录不落库。** `repository.SMSRepository` 依赖 `*gorm.DB` 与 MySQL 方言，纯 Go SQLite 的 GORM 驱动未在本轮接入，因此该分支返回一个 `Create` 恒成功的空实现，并在启动日志里明确打印「短信记录不持久化」。选它是为了让 `sqlite` 模式在无 MySQL 环境可用（这正是它的价值：轻量化部署），代价是没有短信原文留存。**需要原文留存就必须用 `mysql` 模式**——这不是 bug 而是当前的能力边界，文档与日志都已明示。
-
-补齐方式是给仓储层接 GORM 的纯 Go SQLite 驱动（如 `github.com/glebarez/sqlite`），注意不能用需要 CGO 的 `mattn/go-sqlite3`（见 3.6）。
+**`sqlite` 模式的落库实现（曾是缺口，已补齐）**：验证码存储与短信归档**共享同一个单连接池**（main 打开，`SetMaxOpenConns(1)`），验证码走 `store/sqlite.NewFromDB`，短信归档走 `repository/sqlite_repo.go` 的影子模型 `sqliteSMSRecord`——列名与 `model.SMSRecord` 逐列一致，仅把 MySQL 专有的 DDL 标签换成 SQLite 方言（直接 AutoMigrate `model.SMSRecord` 会因 `default:CURRENT_TIMESTAMP(3)` 报语法错误，实测踩过），DML 仍直接读写 `model.SMSRecord`。落库行为已端到端实证：webhook 后 `sms_records` 与 `otps` 同库可见，`PRAGMA journal_mode` 返回 `wal`。
 
 SQLite 的软删除是为了解决纯阅后即焚的诊断盲区：调用方说「没收到码」时，还能查到码是否曾写入、何时被取走。Cloudflare 版是同一套语义。
 
@@ -142,11 +141,15 @@ Go 1.21 的 `net/http.ServeMux` **不支持** `{token}` 通配语法（1.22 才�
 
 升级到 Go 1.22+ 时可改用 `r.PathValue("token")`，但那是一次独立改动。
 
-### 3.6 为什么用 `modernc.org/sqlite`
+### 3.6 为什么用 `glebarez/go-sqlite`（而不是 modernc 直引）
 
-`gorm.io/driver/sqlite` 依赖 `mattn/go-sqlite3`，**需要 CGO**，与 `CGO_ENABLED=0` + distroless 构建不兼容（见 Dockerfile）。`modernc.org/sqlite` 是纯 Go 实现，交叉编译与 distroless 镜像都没问题。
+`gorm.io/driver/sqlite` 依赖 `mattn/go-sqlite3`，**需要 CGO**，与 `CGO_ENABLED=0` + distroless 构建不兼容（见 Dockerfile）。
 
-代价是依赖树变大，且**版本必须固定在 v1.29.0**（见 4.2）。
+纯 Go 路线上有一个实测踩过的坑：`modernc.org/sqlite`（database/sql 驱动）与 `github.com/glebarez/sqlite`（GORM 驱动，短信归档用）**都会在 init 时注册名为 `sqlite` 的驱动**，两半混用会让二进制一启动就 panic（`sql: Register called twice for driver sqlite`）。解法是统一走 `github.com/glebarez/go-sqlite`（glebarez GORM 驱动的底层，即 modernc 的 fork）：`store/sqlite` 与 main 的 GORM 共用它，全进程只注册一次。
+
+代价是依赖树变大，且**版本组合必须固定**：`glebarez/sqlite v1.11.0` + `glebarez/go-sqlite v1.21.2`（其 modernc v1.23.1 依赖满足 go 1.21.4；modernc v1.59+ 要求 go 1.25，见 4.1）。
+
+SQLite 连接统一走 `sqlite.SQLiteDSN()` 追加 `busy_timeout(5000)` + `journal_mode(WAL)`：前者兜底共享池之外的并发写（如运维 CLI 查库），后者读写不互斥且崩溃后不易损坏（`-wal`/`-shm` 侧文件已被 .gitignore 覆盖）。DB_DRIVER=sqlite 时验证码与短信归档共享单连接池，由池串行化写事务。
 
 ### 3.7 Cloudflare 子目录为什么要内嵌依赖
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	mysqlstore "smsserver/store/mysql"
 	"smsserver/store/sqlite"
 
+	gsqlite "github.com/glebarez/sqlite" // 别名 gsqlite：与 smsserver/store/sqlite 包名冲突
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
@@ -35,9 +37,9 @@ var version = "dev"
 // （见 config.Config.ResolveOTPStore）。mysql 分支复用调用方已建立的 *gorm.DB，
 // 不自己建连接——短信记录归档用同一条连接，连接池与生命周期由 main 统一收口。
 //
-// 返回 close 是为了让持久化实现在进程退出前关闭连接（SQLite 需要落盘）。
-// 内存实现与 MySQL 实现（不拥有连接）返回空函数，调用方无需区分。
-func newOTPStore(cfg *config.Config, db *gorm.DB) (store.Store, func(), error) {
+// 返回 close 是为了在进程退出前收口底层连接。SQLite 模式下共享池归 main 所有，
+// closeStore 负责关闭它；内存实现与 MySQL 实现（不拥有连接）返回空函数。
+func newOTPStore(cfg *config.Config, gormDB *gorm.DB, sqliteDB *sql.DB) (store.Store, func(), error) {
 	impl, err := cfg.ResolveOTPStore()
 	if err != nil {
 		return nil, nil, err
@@ -45,19 +47,17 @@ func newOTPStore(cfg *config.Config, db *gorm.DB) (store.Store, func(), error) {
 
 	switch impl {
 	case config.StoreSQLite:
-		s, err := sqlite.New(cfg.SQLitePath, cfg.OTPCacheTTL)
+		// 复用 main 打开的共享池（与短信归档同一个），不再自开连接：
+		// 两个模块写同一个库文件，由同一个单连接池串行化全部写事务。
+		s, err := sqlite.NewFromDB(sqliteDB, cfg.OTPCacheTTL)
 		if err != nil {
 			return nil, nil, err
 		}
-		log.Printf("[验证码存储] 实现=SQLite 路径=%s", cfg.SQLitePath)
-		return s, func() {
-			if err := s.Close(); err != nil {
-				log.Printf("[验证码存储] 关闭失败: %v", err)
-			}
-		}, nil
+		log.Printf("[验证码存储] 实现=SQLite 路径=%s (与短信归档共享连接池)", cfg.SQLitePath)
+		return s, func() { _ = sqliteDB.Close() }, nil
 
 	case config.StoreMySQL:
-		s, err := mysqlstore.New(db, cfg.OTPCacheTTL)
+		s, err := mysqlstore.New(gormDB, cfg.OTPCacheTTL)
 		if err != nil {
 			return nil, nil, fmt.Errorf("初始化 MySQL 验证码存储失败: %w", err)
 		}
@@ -87,25 +87,33 @@ type smsRepository interface {
 
 // newSMSRepository 按 DB_DRIVER 选择短信记录的持久化后端。
 //
-// SQLite 分支返回一个空实现：repository.SMSRepository 依赖 *gorm.DB，而 GORM 的
-// 纯 Go SQLite 驱动不在本轮改动范围内，此处刻意不引入，也不连接 MySQL。
-// 因此 sqlite 模式下验证码可用，但短信记录不落库——Create 恒成功，
-// 由启动日志里的「短信记录不持久化」一次性说明覆盖。
-func newSMSRepository(cfg *config.Config, db *gorm.DB) smsRepository {
+// SQLite 分支：用 glebarez/sqlite（纯 Go 的 GORM SQLite 驱动）把调用方传入的
+// 共享连接池（sqliteDB）包成 *gorm.DB，再由 repository.NewSQLiteRepository 用
+// SQLite 方言影子模型建 sms_records 表——短信记录与验证码（同一库文件的 otps 表）
+// 由此真正落在同一个 SQLite 文件里。为什么不直接 AutoMigrate model.SMSRecord：
+// 其标签含 MySQL 专有的 default:CURRENT_TIMESTAMP(3)，SQLite 建表直接报语法
+// 错误（见 repository/sqlite_repo.go 影子模型注释）。
+//
+// MySQL 分支与历史行为完全一致。
+func newSMSRepository(cfg *config.Config, gormDB *gorm.DB, sqliteDB *sql.DB) (smsRepository, error) {
 	switch cfg.DBDriver {
 	case config.DriverSQLite:
-		log.Printf("[数据库] 后端=sqlite 路径=%s 短信记录不持久化（仓储层目前仅支持 MySQL）", cfg.SQLitePath)
-		return noopSMSRepository{}
+		// 复用共享池而不是让驱动自己 Open：验证码存储（store/sqlite）与短信归档
+		// 必须是同一个池，写事务才能被串行化到同一个写者上。
+		gormSQLite, err := gorm.Open(gsqlite.Dialector{Conn: sqliteDB}, &gorm.Config{})
+		if err != nil {
+			return nil, fmt.Errorf("包装 SQLite 连接失败: %w", err)
+		}
+		repo, err := repository.NewSQLiteRepository(gormSQLite)
+		if err != nil {
+			return nil, err
+		}
+		log.Printf("[数据库] 后端=sqlite 路径=%s 短信记录落库(表 sms_records)", cfg.SQLitePath)
+		return repo, nil
 	default:
-		return repository.NewSMSRepository(db)
+		return repository.NewSMSRepository(gormDB), nil
 	}
 }
-
-// noopSMSRepository 短信记录的空实现，仅用于 DB_DRIVER=sqlite 分支。
-type noopSMSRepository struct{}
-
-// Create 空实现：返回 nil 使短信处理链路继续，而不是每来一条短信都打一条插入失败。
-func (noopSMSRepository) Create(*model.SMSRecord) error { return nil }
 
 func main() {
 	// 第一行输出实际运行的版本，便于线上排查「部署的到底是哪个版本」
@@ -121,18 +129,23 @@ func main() {
 		log.Fatal("[配置错误] WEBHOOK_SECRET 不能为空")
 	}
 
-	// 连接数据库：只有 mysql 分支才连。
-	// sqlite 分支完全不接触 MySQL —— 既不建连接也不 AutoMigrate，
-	// 否则在没有 MySQL 的环境里 DB_DRIVER=sqlite 会因为连接失败而启动不了。
-	var db *gorm.DB
-	if cfg.DBDriver == config.DriverMySQL {
+	// 连接数据库：按 DB_DRIVER 二选一，非法值启动即退出。
+	//   - mysql：GORM 连接 MySQL 并 AutoMigrate（历史行为）；
+	//   - sqlite：打开本地共享单连接池，验证码存储与短信归档共用同一个库文件
+	//     与连接池，完全不接触 MySQL（这正是 sqlite 模式的价值：无 MySQL 可跑）。
+	var (
+		gormDB   *gorm.DB // DB_DRIVER=mysql 的 GORM 连接；sqlite 模式下为 nil
+		sqliteDB *sql.DB  // DB_DRIVER=sqlite 的共享连接池；mysql 模式下为 nil
+	)
+	switch cfg.DBDriver {
+	case config.DriverMySQL:
 		var err error
-		db, err = gorm.Open(mysql.Open(cfg.MySQLDSN), &gorm.Config{})
+		gormDB, err = gorm.Open(mysql.Open(cfg.MySQLDSN), &gorm.Config{})
 		if err != nil {
 			log.Fatalf("[数据库] 连接失败: %v", err)
 		}
 
-		sqlDB, err := db.DB()
+		sqlDB, err := gormDB.DB()
 		if err != nil {
 			log.Fatalf("[数据库] 获取连接失败: %v", err)
 		}
@@ -143,14 +156,33 @@ func main() {
 		// 自动建表与建索引。
 		// 索引由 model.SMSRecord 上的 gorm index 标签声明，AutoMigrate 会幂等创建，
 		// 不再手写 CREATE INDEX（MySQL 不支持 CREATE INDEX IF NOT EXISTS，手写会报 1064）。
-		if err := db.AutoMigrate(&model.SMSRecord{}); err != nil {
+		if err := gormDB.AutoMigrate(&model.SMSRecord{}); err != nil {
 			log.Fatalf("[数据库] 迁移失败: %v", err)
 		}
+
+	case config.DriverSQLite:
+		var err error
+		sqliteDB, err = sql.Open("sqlite", sqlite.SQLiteDSN(cfg.SQLitePath))
+		if err != nil {
+			log.Fatalf("[数据库] 打开 SQLite 失败: %v", err)
+		}
+		// SQLite 是单写者模型：把池压到 1 个连接，验证码存储与短信归档的所有
+		// 写事务都由这个池串行化，规避并发写报 "database is locked"；
+		// busy_timeout/WAL 由 SQLiteDSN 统一追加（见 store/sqlite 的 dsnPragmas）。
+		sqliteDB.SetMaxOpenConns(1)
+		sqliteDB.SetMaxIdleConns(1)
+
+	default:
+		log.Fatalf("[配置错误] DB_DRIVER=%q 非法，可选值为 %s|%s",
+			cfg.DBDriver, config.DriverMySQL, config.DriverSQLite)
 	}
 
 	// 初始化各模块
-	repo := newSMSRepository(cfg, db)
-	otpStore, closeStore, err := newOTPStore(cfg, db)
+	repo, err := newSMSRepository(cfg, gormDB, sqliteDB)
+	if err != nil {
+		log.Fatalf("[数据库] 初始化短信归档失败: %v", err)
+	}
+	otpStore, closeStore, err := newOTPStore(cfg, gormDB, sqliteDB)
 	if err != nil {
 		log.Fatalf("[验证码存储] 初始化失败: %v", err)
 	}

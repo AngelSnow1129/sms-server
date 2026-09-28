@@ -12,14 +12,15 @@
 | 清单项 | 证据 | 状态 |
 |---|---|---|
 | cloudflare 分支 | 分支 `cloudflare` 已创建并推送 `origin/cloudflare`；提交链见上 | PASS |
-| SQLite 适配 | `store/sqlite/sqlite_store.go`（244 行，提交 `14671cf` 引入），实现 `store.Store` 接口，纯 Go 驱动 `modernc.org/sqlite v1.29.0` | PASS |
-| MySQL 适配（超出清单的增强） | `store/mysql/mysql_store.go`（提交 `fb24e36` 引入），验证码后端支持 memory/sqlite/mysql 三选一（`OTP_STORE`） | PASS |
+| SQLite 适配 | `store/sqlite/sqlite_store.go`（验证码）+ `repository/sqlite_repo.go`（短信归档影子模型），实现 `store.Store` 接口，纯 Go 驱动统一为 `glebarez/go-sqlite` | PASS |
+| SQLite 短信落库（适配完整性） | `DB_DRIVER=sqlite` 时短信原文与验证码落**同一个库文件**：验证码走 `store/sqlite.NewFromDB`（共享池），归档走 `repository/sqlite_repo.go` 影子模型；端到端实证 webhook 后 `sms_records` 落 1 行、`PRAGMA journal_mode=wal` | PASS |
+| MySQL 适配 | `store/mysql/mysql_store.go`（提交 `fb24e36`），验证码后端支持 memory/sqlite/mysql 三选一（`OTP_STORE`） | PASS |
 | README 按钮 | 根 `README.md` 与 `cloudflare/README.md` 均含 Deploy to Cloudflare 按钮，指向 `tree/cloudflare/cloudflare`（分支未合回 main 前的正确指向） | PASS |
 | Cloudflare Workers 形态 | `cloudflare/` 自包含子目录（内嵌 workers-go），`wrangler.jsonc` + `migrations/0001_init.sql` + `package.json` 一键部署链路 | PASS |
 | 与上游 main 合并 | 提交 `cb31b9f`：模板化提取（含 alpha/alnum 码型）与 smsforward 通道与本分支存储抽象共存，5 个冲突文件按 HANDOVER 3.8 逐项取法解决 | PASS |
 | team 工具 | RustCode `team` 工具存在 harness 层反序列化缺陷（6 次调用全部 `invalid team args`，参数从未以结构化形式到达工具）；等价改用 `task` 工具完成全部并行派发（3 worker + 1 reviewer + 2 补漏） | BLOCKED（harness，非任务内容） |
 
-## 二、门禁实跑输出（合并后 `cb31b9f` 状态，2026-09-29 实测）
+## 二、门禁实跑输出（SQLite 落库增强后，2026-09-29 实测）
 
 | # | 门禁 | 结果 |
 |---|---|---|
@@ -27,13 +28,27 @@
 | 2 | `go vet ./...` | PASS |
 | 3 | `go build ./...` | PASS |
 | 4 | `CGO_ENABLED=0 go build ./...` | PASS（Dockerfile distroless 兼容） |
-| 5 | `go test -race -shuffle=on`（cache/config/handler/service/store） | 全 ok |
+| 5 | `go test -race -shuffle=on`（cache/config/handler/service/store/repository） | 全 ok，含 SQLite 仓储往返测试 |
 | 6 | MySQL 8.0 集成测试（真实库，`-tags=integration`） | 全 ok，含 `store/mysql` 并发实证 |
 | 7 | `cloudflare/` gofmt | 干净 |
 | 8 | `cloudflare/` vet（`GOOS=js GOARCH=wasm`） | PASS |
 | 9 | WASM 构建 | PASS（5,088,491 字节） |
 | 10 | `cloudflare/otp` 单测（race） | ok |
 | 11 | `cloudflare/d1sqltest` SQL 语义实证（race） | ok（14 用例：原子取码、upsert 覆盖、Cron 清理、50/8 连接并发恰一赢家） |
+
+### 端到端实证（SQLite 落库，进程级）
+
+```
+$ DB_DRIVER=sqlite SQLITE_PATH=/tmp/sms-e2e.db ./sms-server
+[数据库] 后端=sqlite 路径=/tmp/sms-e2e.db 短信记录落库(表 sms_records)
+[验证码存储] 实现=SQLite 路径=/tmp/sms-e2e.db (与短信归档共享连接池)
+
+$ curl POST /api/v1/webhook/sms/{secret} → {"status":"ok"}
+$ python3 查库:
+  表清单: ['otps', 'sms_records', 'sqlite_sequence']
+  sms_records 行数: 1  内容: [(1, 'e2e', '+8613900000000', None, '')]
+  journal_mode: wal
+```
 
 ## 三、SQLite 契约测试逐用例（`go test -race -v -run 'TestStoreContract/SQLite' ./store/`）
 
