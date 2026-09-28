@@ -46,7 +46,11 @@
     <p class="lead">两个核心接口 + 一个通道回调。所有接口均为 POST；4xx 错误为纯文本，成功为 JSON。</p>
 
     <h2 id="token-algorithm">token 计算方式</h2>
-    <p>取码接口的 <code>token</code> 是收件人号码的 HMAC 摘要，调用方与服务端共享 <code>HMAC_SECRET</code> 即可对账，服务端不需要保存明文手机号作索引：</p>
+    <div class="note">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+      <span><strong>Cloudflare Workers 版不用算 HMAC。</strong>该形态只有一个 <code>TOKEN</code>：webhook 路径 <code>/api/v1/webhook/sms/{TOKEN}</code> 与取码请求 <code>{"token":"TOKEN"}</code> 都直接用它，读取零计算，TOKEN 错误返回 401。下面的 HMAC 算法<strong>仅适用于自托管 / Docker 形态</strong>。详见 <a href="token.html#static-or-compute">token 计算页</a>。</span>
+    </div>
+    <p>（自托管 / Docker）取码接口的 <code>token</code> 是收件人号码的 HMAC 摘要，调用方与服务端共享 <code>HMAC_SECRET</code> 即可对账，服务端不需要保存明文手机号作索引：</p>
     <pre><code>token = hex( HMAC-SHA256( key = HMAC_SECRET, message = 收件人手机号 ) )</code></pre>
     <ul>
       <li>消息体就是手机号字符串本身（建议带国家码，如 <code>+8613900000000</code>），不做其他预处理</li>

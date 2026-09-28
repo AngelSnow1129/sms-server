@@ -8,7 +8,7 @@
 // 构建产物 build/app.wasm 因此完全不受影响。
 //
 // 被测对象是生产代码本身：SQL 语句常量与封装全部来自 smsserver/cloudflare/otp 包
-// （经 replace 指向父目录），表结构直接读 migrations/0001_init.sql，
+// （经 replace 指向父目录），表结构直接读 migrations/ 目录下全部 migration，
 // 因此这里实证的就是线上跑的那几条语句，而不是复制的副本。
 //
 // 运行方式（主模块的 `go test ./...` 不会递归进嵌套模块，必须显式指定）：
@@ -27,10 +27,12 @@ import (
 	// SQLite 驱动，用来在真实 SQLite 方言上实证 D1 的 SQL 语义。
 	// 纯 Go 实现（modernc.org/sqlite，无 cgo），随测试模块构建，不触碰主模块依赖。
 	_ "modernc.org/sqlite"
+
+	"smsserver/cloudflare/otp"
 )
 
 // schema 建表语句：按字典序读取 migrations/ 目录下全部 migration
-// （0001_init.sql → 0002_add_raw_content.sql → …），避免测试里的表结构与线上漂移。
+// （0001_init.sql → 0002_add_raw_content.sql → 0003_single_token.sql → …），避免测试表结构与线上漂移。
 func schema(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join("..", "migrations")
@@ -80,7 +82,7 @@ func statements(s string) []string {
 	return out
 }
 
-// newDB 在一个临时文件上建库，并执行 0001_init.sql 的全部语句。
+// newDB 在一个临时文件上建库，并执行全部 migration 语句。
 func newDB(t *testing.T) *sql.DB {
 	t.Helper()
 	// 单连接：让并发测试真正争抢同一把写锁，从而检验单条语句的原子性；
@@ -127,14 +129,15 @@ type row struct {
 	updatedAt  int64
 }
 
-func fetch(t *testing.T, db *sql.DB, tokenHash string) row {
+// fetch 读取唯一取码位（slot_key=otp.SlotKey）的当前记录。
+func fetch(t *testing.T, db *sql.DB) row {
 	t.Helper()
 	var r row
 	err := db.QueryRow(
-		`SELECT code, status, expires_at, read_at, raw_content, created_at, updated_at FROM otps WHERE token_hash = ?`,
-		tokenHash).Scan(&r.code, &r.status, &r.expiresAt, &r.readAt, &r.rawContent, &r.createdAt, &r.updatedAt)
+		`SELECT code, status, expires_at, read_at, raw_content, created_at, updated_at FROM otps WHERE slot_key = ?`,
+		otp.SlotKey).Scan(&r.code, &r.status, &r.expiresAt, &r.readAt, &r.rawContent, &r.createdAt, &r.updatedAt)
 	if err != nil {
-		t.Fatalf("查询 %q 失败：%v", tokenHash, err)
+		t.Fatalf("查询取码位失败：%v", err)
 	}
 	return r
 }

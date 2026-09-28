@@ -46,6 +46,10 @@
 
     <h1>token 计算</h1>
     <p class="lead">输入收件人号码与 <code>HMAC_SECRET</code>，在浏览器本地算出取码 token。本页同时解释「哪些值要计算、哪些值静态设置」，并给出与日志对账的排查法。</p>
+    <div class="note">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+      <span>本计算器用于<strong>自托管 / Docker</strong>。<strong>Cloudflare Workers 版只有一个 TOKEN，无需本页</strong>：取码直接发 <code>{"token":"TOKEN"}</code> 即可。</span>
+    </div>
 
     <h2 id="tool">计算工具</h2>
     <p>token 是确定性计算：同样的两个输入永远得到同样的结果，所以不存在「token 过期」或「服务端发放」——算错了重算即可，不用联系服务端。</p>

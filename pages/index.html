@@ -103,20 +103,20 @@
       <div class="steps">
         <div class="step">
           <div class="step-body">
-            <h3>部署服务，拿到两个密钥</h3>
-            <p>点击页首「一键部署到 Cloudflare」，向导中填写 <code>HMAC_SECRET</code> 与 <code>WEBHOOK_SECRET</code>（生成：<code>openssl rand -hex 32</code>），部署完成得到 <code>https://sms-server.&lt;你的子域&gt;.workers.dev</code>。</p>
+            <h3>部署服务，拿到一个 TOKEN</h3>
+            <p>点击页首「一键部署到 Cloudflare」，向导中只需填写一个 <code>TOKEN</code>（生成：<code>openssl rand -hex 32</code>），部署完成得到 <code>https://sms-server.&lt;你的子域&gt;.workers.dev</code>。自托管 / Docker 则需要 <code>WEBHOOK_SECRET</code> 与 <code>HMAC_SECRET</code> 两个密钥。</p>
           </div>
         </div>
         <div class="step">
           <div class="step-body">
             <h3>让短信流向 webhook</h3>
-            <p>把回调地址配置到短信来源：供应商回调直接用 <code>/api/v1/webhook/sms/{WEBHOOK_SECRET}</code>；安卓备用机可用 SmsForwarder 转发，<a href="smsforward.html">对接教程见这里</a>，支持按通道独立鉴权。</p>
+            <p>把回调地址配置到短信来源：Workers 用 <code>/api/v1/webhook/sms/{TOKEN}</code>；自托管用 <code>/api/v1/webhook/sms/{WEBHOOK_SECRET}</code>。安卓备用机可用 SmsForwarder 转发，<a href="smsforward.html">对接教程见这里</a>，自托管支持按通道独立鉴权。</p>
           </div>
         </div>
         <div class="step">
           <div class="step-body">
-            <h3>按手机号轮询取码</h3>
-            <p>调用方在本地用同一个 <code>HMAC_SECRET</code> 算出 token，POST 到 <code>/api/v1/otp</code> 即可；命中返回验证码并立即失效。token 是收件人号码 + 密钥的确定性计算结果，不是服务端下发的配置——用下方取码助手或 <a href="token.html">token 计算页</a> 生成命令。</p>
+            <h3>凭 token 取码</h3>
+            <p>Workers 直接 POST <code>{"token":"TOKEN"}</code> 到 <code>/api/v1/otp</code>，零计算；自托管则用 <code>HMAC_SECRET</code> 对号码算出 token（用下方取码助手或 <a href="token.html">token 计算页</a> 生成命令）。命中返回验证码并立即失效。</p>
           </div>
         </div>
       </div>
@@ -128,7 +128,7 @@
     <div class="container">
       <div class="section-head">
         <h2>取码助手</h2>
-        <p>在浏览器本地计算 token 并生成可直接复制的命令。密钥与手机号只在当前页面内存中参与计算，本页不发出任何网络请求（Web Crypto 要求 HTTPS 或 localhost）。只需要算 token、或想弄清「哪些值要计算、哪些是静态设置」，到 <a href="token.html">token 计算页</a>。</p>
+        <p>在浏览器本地计算 token 并生成可直接复制的命令。密钥与手机号只在当前页面内存中参与计算，本页不发出任何网络请求（Web Crypto 要求 HTTPS 或 localhost）。只需要算 token、或想弄清「哪些值要计算、哪些是静态设置」，到 <a href="token.html">token 计算页</a>。<strong>本助手面向自托管 / Docker</strong>；Cloudflare Workers 取码直接发 TOKEN、无需计算。</p>
       </div>
 
       <div class="tool card" id="otpTool">

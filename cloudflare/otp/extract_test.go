@@ -24,6 +24,11 @@ func TestExtractCode(t *testing.T) {
 		{"空内容", "", ""},
 		{"仅三位数字", "您的验证码是123", ""},
 		{"仅九位数字", "订单999999999已提交", ""},
+		// 纯字符串 / 字母数字混合验证码
+		{"纯字符串验证码", "您的验证码为Gcfx，该验证码只能使用一次，请勿泄露于他人。", "Gcfx"},
+		{"字母数字混合", "验证码：Ab12Cd，请勿泄露。", "Ab12Cd"},
+		{"英文字母码", "Your code is ABCD, do not share.", "ABCD"},
+		{"英文大写冒号", "YOUR VERIFICATION CODE: WXYZ", "WXYZ"},
 	}
 
 	for _, tt := range tests {

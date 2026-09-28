@@ -18,14 +18,11 @@
       "DB": {
         "description": "D1 数据库，存放待取验证码。首次部署时自动创建，建表由 deploy 脚本中的 migration 完成。"
       },
-      "HMAC_SECRET": {
-        "description": "手机号 HMAC-SHA256 密钥，必须与调用方一致。生成方式：`openssl rand -hex 32`。"
-      },
-      "WEBHOOK_SECRET": {
-        "description": "webhook 路径鉴权密钥，即 `/api/v1/webhook/sms/{token}` 中的 `{token}`。生成方式：`openssl rand -hex 32`。"
+      "TOKEN": {
+        "description": "唯一鉴权 token，发送与读取都用它：webhook 路径 /api/v1/webhook/sms/{TOKEN}，取码 /api/v1/otp 的 {\"token\":\"TOKEN\"}。生成方式：`openssl rand -hex 32`。"
       },
       "OTP_TTL_SECONDS": {
-        "description": "验证码有效期（秒），默认 300。"
+        "description": "验证码建议有效期（秒，仅作信息字段），默认 300；未读验证码不会因它自动失效。"
       }
     }
   }
