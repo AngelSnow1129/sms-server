@@ -3,6 +3,14 @@ name: CI
 on:
   push:
     branches: [main]
+    # 纯文档变更不触发 Go 门禁：docs/ 是 Wiki 镜像源（由 wiki.yml 同步），
+    # markdown 改动不影响任何 Go 产物。注意 pages/ 不在此列——pages 变更
+    # 仍需跑本 workflow 的 pages job（verify-pages.sh 门禁）。
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'          # 仅根目录：README 等纯文档。pages/README.md 不匹配本条，
+                        # pages/ 变更仍会触发本 workflow 的 pages 门禁 job
+      - '.gitignore'
   pull_request:
   workflow_dispatch:
 
@@ -175,3 +183,15 @@ jobs:
           name: build-${{ matrix.goos }}-${{ matrix.goarch }}
           path: ${{ runner.temp }}/dist/*
           if-no-files-found: error
+
+  pages:
+    name: 文档站检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # 与代码门禁同源的文档站门禁：元数据完整性、站点地址一致性、内链与锚点、
+    # 隐私红线（零网络请求 / 零第三方资源）。规则依据见 docs/PAGES-PLAN.md §6。
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 文档站一致性检查
+        run: ./scripts/verify-pages.sh

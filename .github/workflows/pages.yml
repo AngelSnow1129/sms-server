@@ -1,0 +1,51 @@
+# docs/ → GitHub Pages 发布：push main 且 pages/、门禁脚本或本文件变更时触发。
+# 发布通道固定为官方 Pages 部署动作；仓库 Settings → Pages → Source 需选 GitHub Actions（一次性手工配置）。
+# 设计依据见 docs/PAGES-PLAN.md §4：无构建步骤，不引入 Node 工具链，不用「选分支目录」的 Pages 配置。
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pages/**'
+      - 'scripts/verify-pages.sh'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只保留一个进行中的 Pages 部署，排队中的旧部署直接取消
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: 发布文档站
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 门禁前置：检查不过就不发布。CI 里的 pages job 只拦 PR，无法阻止本 workflow
+      # 自行部署，故这里必须再跑一次，确保坏页面永远上不了线（fail-closed）。
+      - name: 文档站一致性检查（不过则不发布）
+        run: ./scripts/verify-pages.sh
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传站点目录
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages
+
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
