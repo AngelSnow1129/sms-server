@@ -50,7 +50,7 @@ go test ./...                      # 测 otp 包（不依赖 Workers 运行时�
 cd d1sqltest && go test -race ./...  # SQL 语义实证：嵌套独立 module，不会被 ../... 递归到，必须显式跑
 ```
 
-需要 Go 1.21.4 与 Node 20+。`./scripts/verify-deliverables.sh` 可一键核对交付清单与本地门禁。
+需要 Go 1.21.4 与 Node 20+。`./scripts/verify-deliverables.sh` 可一键核对交付清单与本地门禁；`./scripts/verify-pages.sh` 校验文档站一致性（改了 `pages/` 后必跑）；`./scripts/sync-wiki.sh [--dry-run]` 同步 `docs/` 到 GitHub Wiki 镜像（改了 `docs/` 后可用 `--dry-run` 预览，正常由 `wiki.yml` 自动执行）。
 
 ## 架构
 
@@ -120,5 +120,8 @@ main → handler → service → {store, repository} → model
 
 ## 其他目录
 
-- `pages/`：纯静态、零构建的文档站（取码助手 / token 计算页 / 接口文档 / SmsForwarder 教程）。改了接口或配置需同步检查 `docs.html`、`smsforward.html`。
+- `pages/`：纯静态、零构建的文档站（取码助手 / token 计算页 / 接口文档 / SmsForwarder 教程），另含 `robots.txt` 与 `sitemap.xml`（爬取规则与站点地图）。站点地址固定为 GitHub Pages 默认域 `https://angelsnow1129.github.io/WebHookServer/`，不绑定自定义域名；页面清单与维护约定见 `pages/README.md`，方案见 `docs/PAGES-PLAN.md`。改了接口或配置需同步检查 `docs.html`、`smsforward.html`。
+- `scripts/verify-pages.sh`：文档站一致性门禁（元数据完整性、canonical/og:url 一致、sitemap 与 canonical 同源、内链锚点有效、隐私红线——无第三方资源），**fail-closed**；已接入 `.github/workflows/ci.yml` 的 `pages` job，`.github/workflows/pages.yml` 发布前也会先跑它，不过则不发布。
+- `scripts/sync-wiki.sh` 与 `.github/workflows/wiki.yml`：把 `docs/*.md`（唯一事实源）单向同步为 **GitHub Wiki 只读镜像**，镜像页顶部注入「本页由仓库自动同步生成，请勿在 Wiki 直接编辑」横幅。需先在 GitHub 网页端创建 Wiki 首个页面以初始化 `.wiki.git` 后端，否则脚本以 SKIP 退出（不报红）。
+- `docs/README.md`：`docs/` 知识库索引与登记入口；`docs/PAGES-PLAN.md`：文档站（GitHub Pages）方案；`docs/WIKI-ARCHITECTURE.md`：知识库（Wiki）架构。
 - `docs/INTEGRATION.md`：来源方/取码方完整对接流程与 token 计算示例；`docs/HANDOVER.md`：维护视角的设计取舍；`docs/BRANCH-VERIFICATION.md`：分支门禁证据。

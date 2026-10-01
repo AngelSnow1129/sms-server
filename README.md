@@ -6,6 +6,12 @@
 
 从短信供应商回调中自动提取验证码并缓存,供调用方轮询获取的服务。调用方无需接入各短信平台的 API,只需接收 webhook 并按手机号取码。
 
+**在线工具与文档**（[文档站](https://angelsnow1129.github.io/WebHookServer/) · [知识库 Wiki](https://github.com/AngelSnow1129/WebHookServer/wiki)）：
+[token 计算器](https://angelsnow1129.github.io/WebHookServer/token.html) ·
+[接口文档](https://angelsnow1129.github.io/WebHookServer/docs.html) ·
+[SmsForwarder 对接教程](https://angelsnow1129.github.io/WebHookServer/smsforward.html) ·
+[来源方/取码方对接流程](docs/INTEGRATION.md)
+
 ## Cloudflare 一键部署
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/AngelSnow1129/WebHookServer/tree/cloudflare/cloudflare)
@@ -22,7 +28,7 @@
       │  ProcessIncomingSMSAsync(纳入 WaitGroup 在途追踪)
       ▼
   service.ProcessIncomingSMS
-      ├─ extractCode()  正则 \b(\d{4,8})\b 提取验证码
+      ├─ extractCode()  模板强/弱匹配优先,回退正则 \b(\d{4,8})\b 提取验证码
       ├─ cache.Set(HMAC-SHA256(收件人号码), 验证码)   ← 内存缓存,带 TTL
       └─ repo.Create()  原始短信落库 MySQL
 
@@ -60,9 +66,12 @@ SMSServer/
 ├── docs/HANDOVER.md                 交接文档:本轮改动的设计取舍与验证记录
 ├── docs/INTEGRATION.md              Webhook 对接指南:来源方/取码方接入、token 计算、轮询与联调
 ├── cloudflare/                      Cloudflare Workers + D1 部署形态(自包含子目录,见 cloudflare/README.md)
-├── .github/workflows/ci.yml         CI:格式/静态检查/单测/集成测试/交叉编译
+├── .github/workflows/ci.yml         CI:格式/静态检查/单测/集成测试/交叉编译/文档站门禁
 ├── .github/workflows/cloudflare.yml Cloudflare:格式/静态检查/WASM 构建/单测
+├── .github/workflows/pages.yml      Pages:文档站发布(发布前先跑 verify-pages.sh 门禁)
+├── .github/workflows/wiki.yml       Wiki:docs/ → GitHub Wiki 只读镜像单向同步
 ├── .github/workflows/release.yml    发布:tag 触发 → Release + GHCR 多架构镜像
+├── scripts/                         verify-pages.sh(文档站门禁)、sync-wiki.sh(Wiki 同步)、verify-deliverables.sh(交付清单核对)
 ├── Dockerfile                       多阶段构建,distroless 非 root 运行
 ├── .dockerignore
 ├── .env.example                     环境变量示例
@@ -415,8 +424,10 @@ TEST_MYSQL_DSN='root:root@tcp(127.0.0.1:3306)/smsdb_test?parseTime=true&loc=Loca
 
 | 工作流 | 触发条件 | 内容 |
 |---|---|---|
-| [`ci.yml`](.github/workflows/ci.yml) | push 到 `main`、所有 PR、手动 | `gofmt` → `go mod tidy` 幂等性 → `go vet` → `go build` → 单测(`-race -shuffle=on` + 覆盖率)→ **MySQL 8.0 集成测试** → 5 平台交叉编译并上传编译产物(Artifacts) |
+| [`ci.yml`](.github/workflows/ci.yml) | push 到 `main`、所有 PR、手动 | `gofmt` → `go mod tidy` 幂等性 → `go vet` → `go build` → 单测(`-race -shuffle=on` + 覆盖率)→ **MySQL 8.0 集成测试** → 5 平台交叉编译并上传编译产物(Artifacts)→ 文档站门禁(`pages` job) |
 | [`cloudflare.yml`](.github/workflows/cloudflare.yml) | `cloudflare/**` 变更 push 到 `main` 或发起 PR、手动 | 在独立 module 中执行 `gofmt` → `go vet` → `GOOS=js GOARCH=wasm go build` → 单测 |
+| [`pages.yml`](.github/workflows/pages.yml) | push 到 `main` 且 `pages/` 或门禁脚本变更、手动 | 文档站一致性门禁(`verify-pages.sh`,**不过则不发布**)→ 发布 `pages/` 到 GitHub Pages |
+| [`wiki.yml`](.github/workflows/wiki.yml) | push 到 `main` 且 `docs/` 或同步脚本变更、手动 | `sync-wiki.sh` 把 `docs/*.md` 单向同步为 GitHub Wiki 只读镜像(Wiki 未初始化时 SKIP 不报红) |
 | [`release.yml`](.github/workflows/release.yml) | 推送 `v*.*.*` tag、手动 | 发布前门禁 → 5 平台编译并打包 → 生成 `SHA256SUMS` → 创建 GitHub Release → 推送多架构镜像到 GHCR |
 
 CI 显式设置 `GOTOOLCHAIN=local`,禁止自动下载其它 Go 工具链。若 `go.mod` 的 `go` 指令高于实际安装版本,会**明确报错**而不是静默切换版本——这能防止 CI 悄悄改用 Go 1.22 而使前缀路由的兼容性假设失效。
