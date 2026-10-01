@@ -31,7 +31,7 @@ grep -q 'SetMaxOpenConns(1)' main.go \
 
 echo
 echo "== README Deploy 按钮 =="
-grep -q 'deploy.workers.cloudflare.com/?url=https://github.com/AngelSnow1129/WebHookServer/tree/cloudflare/cloudflare' README.md \
+grep -q 'deploy.workers.cloudflare.com/?url=https://github.com/AngelSnow1129/sms-server/tree/cloudflare/cloudflare' README.md \
   && ok "根 README 按钮（指向 cloudflare 分支）" || bad "根 README 按钮缺失"
 grep -q 'deploy.workers.cloudflare.com' cloudflare/README.md \
   && ok "cloudflare/README 按钮" || bad "cloudflare/README 按钮缺失"

@@ -6,12 +6,12 @@
   <title>接口文档 · SMSServer</title>
   <meta name="description" content="SMSServer 接口文档：短信回调、验证码查询、SMSForward 通道回调的请求格式、鉴权方式与错误码。" />
   <!-- 域名约定见 index.html 头部注释；域名变更时四页 + robots.txt + sitemap.xml 同步改。 -->
-  <link rel="canonical" href="https://angelsnow1129.github.io/WebHookServer/docs.html" />
+  <link rel="canonical" href="https://angelsnow1129.github.io/sms-server/docs.html" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="SMSServer" />
   <meta property="og:title" content="接口文档 · SMSServer" />
   <meta property="og:description" content="SMSServer 接口文档：短信回调、验证码查询、SMSForward 通道回调的请求格式、鉴权方式与错误码。" />
-  <meta property="og:url" content="https://angelsnow1129.github.io/WebHookServer/docs.html" />
+  <meta property="og:url" content="https://angelsnow1129.github.io/sms-server/docs.html" />
   <meta property="og:locale" content="zh_CN" />
   <meta name="twitter:card" content="summary" />
   <meta name="twitter:title" content="接口文档 · SMSServer" />
@@ -143,7 +143,7 @@
       <table>
         <thead><tr><th>项</th><th>Cloudflare 一键部署</th><th>自托管（Docker / 二进制）</th></tr></thead>
         <tbody>
-          <tr><td>入口</td><td><a href="https://deploy.workers.cloudflare.com/?url=https://github.com/AngelSnow1129/WebHookServer/tree/main/cloudflare">部署按钮</a>（向导填两个密钥）</td><td><code>docker build</code> 或 <code>go build</code>，环境变量注入</td></tr>
+          <tr><td>入口</td><td><a href="https://deploy.workers.cloudflare.com/?url=https://github.com/AngelSnow1129/sms-server/tree/main/cloudflare">部署按钮</a>（向导填两个密钥）</td><td><code>docker build</code> 或 <code>go build</code>，环境变量注入</td></tr>
           <tr><td>验证码存储</td><td>D1（唯一事实源，自动建表）</td><td><code>DB_DRIVER=mysql</code>（默认，内存缓存）或 <code>DB_DRIVER=sqlite</code>（<code>SQLITE_PATH</code> 持久化）</td></tr>
           <tr><td>公共必填</td><td colspan="2"><code>HMAC_SECRET</code>、<code>WEBHOOK_SECRET</code>（<code>openssl rand -hex 32</code> 生成）</td></tr>
           <tr><td>有效期</td><td><code>OTP_TTL_SECONDS</code>（秒，默认 300）</td><td><code>OTP_CACHE_TTL_MINUTES</code>（分钟，默认 5）</td></tr>
@@ -182,7 +182,7 @@
       </div>
       <div class="footer-meta">验证码中继 · 阅后即焚 · 开源</div>
       <div class="footer-links">
-        <a href="https://github.com/AngelSnow1129/WebHookServer" rel="noopener">GitHub 仓库</a>
+        <a href="https://github.com/AngelSnow1129/sms-server" rel="noopener">GitHub 仓库</a>
         <a href="docs.html">接口文档</a>
         <a href="token.html">token 计算</a>
         <a href="smsforward.html">SMSForward 对接</a>

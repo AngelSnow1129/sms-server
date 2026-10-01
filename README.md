@@ -1,20 +1,20 @@
 # SMSServer 短信验证码中继服务
 
-[![CI](https://github.com/AngelSnow1129/WebHookServer/actions/workflows/ci.yml/badge.svg)](https://github.com/AngelSnow1129/WebHookServer/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/AngelSnow1129/WebHookServer?sort=semver)](https://github.com/AngelSnow1129/WebHookServer/releases)
+[![CI](https://github.com/AngelSnow1129/sms-server/actions/workflows/ci.yml/badge.svg)](https://github.com/AngelSnow1129/sms-server/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/AngelSnow1129/sms-server?sort=semver)](https://github.com/AngelSnow1129/sms-server/releases)
 [![Go](https://img.shields.io/badge/Go-1.21.4-00ADD8?logo=go)](https://go.dev/)
 
 从短信供应商回调中自动提取验证码并缓存,供调用方轮询获取的服务。调用方无需接入各短信平台的 API,只需接收 webhook 并按手机号取码。
 
-**在线工具与文档**（[文档站](https://angelsnow1129.github.io/WebHookServer/) · [知识库 Wiki](https://github.com/AngelSnow1129/WebHookServer/wiki)）：
-[token 计算器](https://angelsnow1129.github.io/WebHookServer/token.html) ·
-[接口文档](https://angelsnow1129.github.io/WebHookServer/docs.html) ·
-[SmsForwarder 对接教程](https://angelsnow1129.github.io/WebHookServer/smsforward.html) ·
+**在线工具与文档**（[文档站](https://angelsnow1129.github.io/sms-server/) · [知识库 Wiki](https://github.com/AngelSnow1129/sms-server/wiki)）：
+[token 计算器](https://angelsnow1129.github.io/sms-server/token.html) ·
+[接口文档](https://angelsnow1129.github.io/sms-server/docs.html) ·
+[SmsForwarder 对接教程](https://angelsnow1129.github.io/sms-server/smsforward.html) ·
 [来源方/取码方对接流程](docs/INTEGRATION.md)
 
 ## Cloudflare 一键部署
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/AngelSnow1129/WebHookServer/tree/cloudflare/cloudflare)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/AngelSnow1129/sms-server/tree/cloudflare/cloudflare)
 
 无需自备服务器与数据库即可部署 Workers + D1 版本,配置项、迁移流程与验证方式见 [cloudflare/README.md](cloudflare/README.md)。
 
@@ -439,7 +439,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-推 tag 后自动完成:门禁校验 → 编译 `linux/amd64`、`linux/arm64`、`darwin/amd64`、`darwin/arm64`、`windows/amd64` → 生成校验和 → 创建 Release(含自动生成的变更说明)→ 推送 `ghcr.io/angelsnow1129/webhookserver:1.0.0`(`1.0` 与 `latest` 同时打标)。
+推 tag 后自动完成:门禁校验 → 编译 `linux/amd64`、`linux/arm64`、`darwin/amd64`、`darwin/arm64`、`windows/amd64` → 生成校验和 → 创建 Release(含自动生成的变更说明)→ 推送 `ghcr.io/angelsnow1129/sms-server:1.0.0`(`1.0` 与 `latest` 同时打标)。
 
 > Release 中的产物为 `tar.gz`(Unix)与 `zip`(Windows),附 `checksums.txt`。校验:`sha256sum -c checksums.txt`。
 > 若要为**已存在**的 tag 重新生成产物,用 `gh workflow run release.yml -f tag=v1.0.0`,已存在的 Release 会被覆盖更新。
@@ -447,10 +447,10 @@ git push origin v1.0.0
 ### 镜像
 
 ```bash
-docker pull ghcr.io/angelsnow1129/webhookserver:latest
+docker pull ghcr.io/angelsnow1129/sms-server:latest
 ```
 
-注意镜像名**全小写**——Docker registry 要求小写,而 GitHub 仓库名保留原始大小写(`AngelSnow1129/WebHookServer`),工作流中已作转换。
+注意镜像名**全小写**——Docker registry 要求小写,而 GitHub 仓库名保留原始大小写(`AngelSnow1129/sms-server`),工作流中已作转换。
 
 ## 已知限制
 

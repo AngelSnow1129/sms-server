@@ -1,14 +1,14 @@
 # 知识库（Wiki）架构设计
 
-> 状态：v4（2026-10-01）。v1 曾结论「仓库内 `docs/` 优先、不用 GitHub Wiki」；v2 修订为「GitHub Wiki 为权威源」；**v3 定稿为镜像模式**：`docs/` 仍是唯一事实源，GitHub Wiki 由 `scripts/sync-wiki.sh` 自动同步生成、**请勿在 Wiki 直接编辑**。两者均用仓库自带功能，不引入第三方托管、wiki 引擎与自定义域名。
+> 状态：v5（2026-10-01）。v1 曾结论「仓库内 `docs/` 优先、不用 GitHub Wiki」；v2 修订为「GitHub Wiki 为权威源」；**v3 定稿为镜像模式**：`docs/` 仍是唯一事实源，GitHub Wiki 由 `scripts/sync-wiki.sh` 自动同步生成、**请勿在 Wiki 直接编辑**。两者均用仓库自带功能，不引入第三方托管、wiki 引擎与自定义域名。v5 起主仓库迁移为 `AngelSnow1129/sms-server`，Wiki 同步目标相应为 `sms-server.wiki.git`（脚本内 `REPO_SLUG` 单一定义源）。
 > 相关文档：`PAGES-PLAN.md`（文档站）、`HANDOVER.md`（设计取舍）、`pages/README.md`。
 
 ## 1. 总体格局：两个 GitHub 原生载体
 
 | 受众 | 载体 | 地址 |
 |---|---|---|
-| 使用者（来源方 / 取码方） | GitHub Pages（仓库 `pages/` 目录） | `https://angelsnow1129.github.io/WebHookServer/` |
-| 维护者 / 贡献者 | GitHub Wiki | `https://github.com/AngelSnow1129/WebHookServer/wiki` |
+| 使用者（来源方 / 取码方） | GitHub Pages（仓库 `pages/` 目录） | `https://angelsnow1129.github.io/sms-server/` |
+| 维护者 / 贡献者 | GitHub Wiki | `https://github.com/AngelSnow1129/sms-server/wiki` |
 | AI 协作 | 仓库内 `CLAUDE.md`（必须在 checkout 内才可被读取） | 仓库根 |
 
 单一事实源原则不变：每个事实只在一处权威定义，其余位置链接引用。Wiki 与 Pages 的分工是**受众分工**（维护者 vs 使用者），不是内容备份关系。
@@ -73,9 +73,9 @@
 | 方向 | 写法 |
 |---|---|
 | wiki 内部 | `[[页面名]]` 或相对 Markdown 链接 |
-| 仓库 → wiki | 只能绝对 URL：`https://github.com/AngelSnow1129/WebHookServer/wiki/<页面名>`（相对链接不会指向 wiki） |
+| 仓库 → wiki | 只能绝对 URL：`https://github.com/AngelSnow1129/sms-server/wiki/<页面名>`（相对链接不会指向 wiki） |
 | wiki → 仓库 | 绝对 URL 指向文件：规范 / 方案类锁 `main` 分支（`blob/main/...`），记录类锁提交 hash，保证证据不被后续改动污染 |
-| wiki / 仓库 → Pages | 绝对 URL：`https://angelsnow1129.github.io/WebHookServer/...` |
+| wiki / 仓库 → Pages | 绝对 URL：`https://angelsnow1129.github.io/sms-server/...` |
 | `pages/` → wiki | 不链（受众不同）；确需引用时用绝对 URL |
 
 ## 6. 同步触发器（代码改动 → 必检 wiki 页）
@@ -100,7 +100,7 @@
 
 ## 8. 启用步骤（一次性）
 
-1. **初始化 Wiki**：打开 `https://github.com/AngelSnow1129/WebHookServer/wiki`，点「创建第一个页面」随便写一行保存。这一步只为让 GitHub 建出 `.wiki.git` git 后端（此前该仓库不存在，脚本会 SKIP 并打印指引）。
+1. **初始化 Wiki**：打开 `https://github.com/AngelSnow1129/sms-server/wiki`，点「创建第一个页面」随便写一行保存。这一步只为让 GitHub 建出 `.wiki.git` git 后端（此前该仓库不存在，脚本会 SKIP 并打印指引）。
 2. **触发首次同步**：合并包含 `scripts/sync-wiki.sh` 与 `docs/` 的 PR 到 `main`（`wiki.yml` 自动跑），或在 Actions 里手动 `workflow_dispatch` 该 workflow；本地执行 `./scripts/sync-wiki.sh` 等效。
 3. **确认结果**：Wiki 上应出现 9 个页面 + `_Sidebar`，每页顶部是「请勿在 Wiki 编辑」横幅。
 

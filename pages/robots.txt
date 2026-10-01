@@ -3,4 +3,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://angelsnow1129.github.io/WebHookServer/sitemap.xml
+Sitemap: https://angelsnow1129.github.io/sms-server/sitemap.xml

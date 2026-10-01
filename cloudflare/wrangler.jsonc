@@ -20,8 +20,9 @@
       "binding": "DB",
       // 用户可在部署向导里改名；migration 用 binding 名 DB 而非此名，改名也不会失效。
       "database_name": "sms-server-db",
-      // 占位值，部署时由 Cloudflare 替换为真实 database_id。
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      // 迁移自 WebHookServer 仓库时从部署快照回填的真实 D1 database_id
+      // （若在 Cloudflare 侧重新一键部署，向导会再次替换为当时的真实值）。
+      "database_id": "43452314-1451-47d7-9b7c-6e7b5714809f"
     }
   ],
   "triggers": {

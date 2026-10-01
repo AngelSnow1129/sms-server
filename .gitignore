@@ -41,6 +41,7 @@ api.json
 # 如需团队共享，应改为提交 package.json + install 脚本，仅保留锁文件。
 .agents/
 .claude/
+.codebuddy/
 .rustcode/
 skills-lock.json
 .mcp.json

@@ -1,6 +1,6 @@
 # SMSServer Pages —— 静态文档站
 
-面向使用者的在线说明与工具页：**纯静态、零依赖、无构建步骤**，通过 GitHub Pages 发布（见「部署」），站点地址固定为 `https://angelsnow1129.github.io/WebHookServer/`。
+面向使用者的在线说明与工具页：**纯静态、零依赖、无构建步骤**，通过 GitHub Pages 发布（见「部署」），站点地址固定为 `https://angelsnow1129.github.io/sms-server/`。
 
 ## 页面清单
 

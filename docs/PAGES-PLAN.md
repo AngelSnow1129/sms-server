@@ -1,6 +1,6 @@
 # 文档站（Pages）建设方案
 
-> 状态：v5（2026-10-01）。按项目决策修订：**文档站 = GitHub Pages，仓库 `pages/` 目录发布，固定使用 GitHub Pages 默认域名**，不绑定自定义域名、不使用任何第三方托管（Cloudflare Pages / Nginx 等均不做）。v3 起质量门禁已落地（`scripts/verify-pages.sh` + CI `pages` job），v4 起门禁 fail-closed 并同时作为发布前置；v5 起样式全令牌化并支持**暗色主题**（`prefers-color-scheme` 自动切换，无 JS、无手动开关）。知识库侧见 `WIKI-ARCHITECTURE.md`（GitHub Wiki）。
+> 状态：v6（2026-10-01）。按项目决策修订：**文档站 = GitHub Pages，仓库 `pages/` 目录发布，固定使用 GitHub Pages 默认域名**，不绑定自定义域名、不使用任何第三方托管（Cloudflare Pages / Nginx 等均不做）。v3 起质量门禁已落地（`scripts/verify-pages.sh` + CI `pages` job），v4 起门禁 fail-closed 并同时作为发布前置；v5 起样式全令牌化并支持**暗色主题**（`prefers-color-scheme` 自动切换，无 JS、无手动开关）；v6 起主仓库迁移为 `AngelSnow1129/sms-server`，站点域（`angelsnow1129.github.io/sms-server`）、部署按钮、GHCR 镜像名随之切换。知识库侧见 `WIKI-ARCHITECTURE.md`（GitHub Wiki）。
 > 相关文档：`pages/README.md`（页面清单与维护约定）、`docs/INTEGRATION.md`（对接流程）。
 
 ## 1. 定位与现状
@@ -46,7 +46,7 @@ index.html ──┬── docs.html        （接口文档，锚点：#token-al
 | `sitemap.xml` 的 `<loc>` | `pages/sitemap.xml` |
 | 首页 `ld+json` 的 `url` | `pages/index.html` |
 
-**不做**自定义域名：不加 `CNAME` 文件、不配 DNS；域名唯一，无「换域名」流程。若仓库未来改名或转移账号，一次性全局搜索替换 `angelsnow1129.github.io/WebHookServer` 即可（六处，均在 `pages/` 内），属于仓库级事件而非本站日常维护项。
+**不做**自定义域名：不加 `CNAME` 文件、不配 DNS；域名唯一，无「换域名」流程。若仓库未来改名或转移账号，一次性全局搜索替换 `angelsnow1129.github.io/sms-server` 即可（六处，均在 `pages/` 内），属于仓库级事件而非本站日常维护项。
 
 ## 4. 发布方式：GitHub Actions 部署 Pages
 

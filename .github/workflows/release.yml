@@ -188,7 +188,7 @@ jobs:
       - name: 计算镜像名
         id: image
         # Docker 镜像名必须全小写，而 github.repository 保留原始大小写
-        # （AngelSnow1129/WebHookServer），直接使用会被 registry 拒绝。
+        # （AngelSnow1129/sms-server），直接使用会被 registry 拒绝。
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - name: 生成镜像标签

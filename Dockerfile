@@ -37,7 +37,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 
 LABEL org.opencontainers.image.title="sms-server" \
       org.opencontainers.image.description="短信验证码中继服务" \
-      org.opencontainers.image.source="https://github.com/AngelSnow1129/WebHookServer"
+      org.opencontainers.image.source="https://github.com/AngelSnow1129/sms-server"
 
 COPY --from=builder /out/sms-server /sms-server
 

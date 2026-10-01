@@ -29,7 +29,7 @@ if ! cd "$(dirname "$0")/.."; then
   exit 1
 fi
 
-REPO_SLUG="AngelSnow1129/WebHookServer"
+REPO_SLUG="AngelSnow1129/sms-server"
 WIKI_REMOTE="${WIKI_REMOTE:-https://github.com/${REPO_SLUG}.wiki.git}"
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
@@ -99,12 +99,13 @@ fi
 
 # ---- 生成镜像页 ----
 mkdir -p "$WORK/out"
-if ! python3 - "$WORK/out" <<'PY'
+if ! python3 - "$WORK/out" "$REPO_SLUG" <<'PY'
 import pathlib, re, sys
 
 out = pathlib.Path(sys.argv[1])
 docs = pathlib.Path('docs')
-REPO = 'AngelSnow1129/WebHookServer'
+# 仓库 slug 由 shell 侧 REPO_SLUG 单向传入，此处不再写死（避免两处定义漂移）
+REPO = sys.argv[2]
 BASE = 'https://github.com/%s' % REPO
 
 # 页面映射表（唯一权威定义）：源文件 | Wiki 页面名 | 分组 | 一句话

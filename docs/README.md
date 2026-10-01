@@ -7,8 +7,8 @@
 
 | 文档 | 类型 | 读者 | 一句话 | 状态 |
 |---|---|---|---|---|
-| [WIKI-ARCHITECTURE.md](WIKI-ARCHITECTURE.md) | 方案 | 维护者 | 知识库架构：为何用镜像、页面映射、同步机制、链接规则、启用步骤 | v4 |
-| [PAGES-PLAN.md](PAGES-PLAN.md) | 方案 | 维护者 | 文档站（GitHub Pages）方案：定位、信息架构、站点地址、发布 workflow、质量门禁、双主题 | v5 |
+| [WIKI-ARCHITECTURE.md](WIKI-ARCHITECTURE.md) | 方案 | 维护者 | 知识库架构：为何用镜像、页面映射、同步机制、链接规则、启用步骤 | v5 |
+| [PAGES-PLAN.md](PAGES-PLAN.md) | 方案 | 维护者 | 文档站（GitHub Pages）方案：定位、信息架构、站点地址、发布 workflow、质量门禁、双主题 | v6 |
 | [HANDOVER.md](HANDOVER.md) | 解释 | 新接手维护者 | 双部署形态与两条存储链路的设计取舍 | stable |
 | [LOGGING.md](LOGGING.md) | 参考 | 维护者、排障者 | 日志脱敏、模块前缀、字段/级别/点位完整规范 | stable |
 | [WIKI_SMSFORWARD_TEMPLATES.md](WIKI_SMSFORWARD_TEMPLATES.md) | 规格 | 维护者 | 未合入 PR #1 的模板化提取与 SMSForward 多通道目标状态 | 待合入 |

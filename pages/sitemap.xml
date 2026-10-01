@@ -3,22 +3,22 @@
      新增页面时在此登记；部署域名变更时与页面头部 canonical/og:url、robots.txt 同步修改。 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://angelsnow1129.github.io/WebHookServer/</loc>
+    <loc>https://angelsnow1129.github.io/sms-server/</loc>
     <changefreq>monthly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://angelsnow1129.github.io/WebHookServer/docs.html</loc>
+    <loc>https://angelsnow1129.github.io/sms-server/docs.html</loc>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://angelsnow1129.github.io/WebHookServer/smsforward.html</loc>
+    <loc>https://angelsnow1129.github.io/sms-server/smsforward.html</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://angelsnow1129.github.io/WebHookServer/token.html</loc>
+    <loc>https://angelsnow1129.github.io/sms-server/token.html</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
