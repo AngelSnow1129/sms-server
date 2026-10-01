@@ -5,7 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SMSForward 对接教程 · SMSServer</title>
   <meta name="description" content="用安卓备用机 + SmsForwarder 把短信验证码转发到 SMSServer：webhook 配置、消息模板占位符对照、多通道独立鉴权与常见问题。" />
-  <meta name="theme-color" content="#2563EB" />
+  <!-- 域名约定见 index.html 头部注释；域名变更时四页 + robots.txt + sitemap.xml 同步改。 -->
+  <link rel="canonical" href="https://angelsnow1129.github.io/WebHookServer/smsforward.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="SMSServer" />
+  <meta property="og:title" content="SMSForward 对接教程 · SMSServer" />
+  <meta property="og:description" content="用安卓备用机 + SmsForwarder 把短信验证码转发到 SMSServer：webhook 配置、消息模板占位符对照、多通道独立鉴权与常见问题。" />
+  <meta property="og:url" content="https://angelsnow1129.github.io/WebHookServer/smsforward.html" />
+  <meta property="og:locale" content="zh_CN" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="SMSForward 对接教程 · SMSServer" />
+  <meta name="twitter:description" content="用安卓备用机 + SmsForwarder 把短信验证码转发到 SMSServer：webhook 配置、消息模板占位符对照、多通道独立鉴权与常见问题。" />
+  <meta name="theme-color" content="#F8FAFC" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0B1120" media="(prefers-color-scheme: dark)" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%232563EB'/%3E%3Cstop offset='100%25' stop-color='%230EA5E9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='512' height='512' rx='116' fill='url(%23b)'/%3E%3Cpath d='M120 200a40 40 0 0 1 40-40h192a40 40 0 0 1 40 40v84a40 40 0 0 1-40 40H236l-72 56v-56h-4a40 40 0 0 1-40-40z' fill='%23fff' fill-opacity='.92'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="assets/css/style.css" />
 </head>
@@ -29,8 +41,9 @@
       <nav class="nav-links">
         <a href="index.html#features">功能特性</a>
         <a href="index.html#tool">取码助手</a>
-        <a href="docs.html">接口文档</a>
-        <a class="nav-cta" href="index.html">返回首页</a>
+        <a href="token.html">token 计算</a>
+        <a href="smsforward.html" aria-current="page">SMSForward 对接</a>
+        <a class="nav-cta" href="docs.html">接口文档</a>
       </nav>
     </div>
   </header>
@@ -202,11 +215,12 @@ SMSServer 提取验证码，按收件人号码（= 备用机 SIM 卡号）落缓
         </svg>
         <span>SMSServer</span>
       </div>
-      <div class="footer-meta">验证码中继 · 阅后即焚 · Go 1.21</div>
+      <div class="footer-meta">验证码中继 · 阅后即焚 · 开源</div>
       <div class="footer-links">
-        <a href="https://github.com/pppscn/SmsForwarder" rel="noopener">SmsForwarder 项目</a>
+        <a href="https://github.com/AngelSnow1129/WebHookServer" rel="noopener">GitHub 仓库</a>
         <a href="docs.html">接口文档</a>
         <a href="token.html">token 计算</a>
+        <a href="smsforward.html">SMSForward 对接</a>
         <a href="index.html#tool">取码助手</a>
       </div>
     </div>

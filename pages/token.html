@@ -5,7 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>token 计算 · SMSServer</title>
   <meta name="description" content="输入收件人号码与 HMAC_SECRET，浏览器本地计算取码 token（HMAC-SHA256 十六进制）。并说明哪些值要计算、哪些值静态设置，附日志前缀对账排查法。" />
-  <meta name="theme-color" content="#2563EB" />
+  <!-- 域名约定见 index.html 头部注释；域名变更时四页 + robots.txt + sitemap.xml 同步改。 -->
+  <link rel="canonical" href="https://angelsnow1129.github.io/WebHookServer/token.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="SMSServer" />
+  <meta property="og:title" content="token 计算 · SMSServer" />
+  <meta property="og:description" content="输入收件人号码与 HMAC_SECRET，浏览器本地计算取码 token（HMAC-SHA256 十六进制）。并说明哪些值要计算、哪些值静态设置，附日志前缀对账排查法。" />
+  <meta property="og:url" content="https://angelsnow1129.github.io/WebHookServer/token.html" />
+  <meta property="og:locale" content="zh_CN" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="token 计算 · SMSServer" />
+  <meta name="twitter:description" content="输入收件人号码与 HMAC_SECRET，浏览器本地计算取码 token（HMAC-SHA256 十六进制）。并说明哪些值要计算、哪些值静态设置，附日志前缀对账排查法。" />
+  <meta name="theme-color" content="#F8FAFC" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0B1120" media="(prefers-color-scheme: dark)" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%232563EB'/%3E%3Cstop offset='100%25' stop-color='%230EA5E9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='512' height='512' rx='116' fill='url(%23b)'/%3E%3Cpath d='M120 200a40 40 0 0 1 40-40h192a40 40 0 0 1 40 40v84a40 40 0 0 1-40 40H236l-72 56v-56h-4a40 40 0 0 1-40-40z' fill='%23fff' fill-opacity='.92'/%3E%3Crect x='180' y='216' width='152' height='18' rx='9' fill='%232563EB' fill-opacity='.85'/%3E%3Crect x='180' y='254' width='96' height='18' rx='9' fill='%232563EB' fill-opacity='.55'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="assets/css/style.css" />
 </head>
@@ -31,9 +43,9 @@
       <nav class="nav-links">
         <a href="index.html#features">功能特性</a>
         <a href="index.html#tool">取码助手</a>
-        <a href="docs.html">接口文档</a>
+        <a href="token.html" aria-current="page">token 计算</a>
         <a href="smsforward.html">SMSForward 对接</a>
-        <a class="nav-cta" href="index.html">返回首页</a>
+        <a class="nav-cta" href="docs.html">接口文档</a>
       </nav>
     </div>
   </header>
@@ -165,11 +177,13 @@
         </svg>
         <span>SMSServer</span>
       </div>
-      <div class="footer-meta">验证码中继 · 阅后即焚 · Go 1.21</div>
+      <div class="footer-meta">验证码中继 · 阅后即焚 · 开源</div>
       <div class="footer-links">
         <a href="https://github.com/AngelSnow1129/WebHookServer" rel="noopener">GitHub 仓库</a>
         <a href="docs.html">接口文档</a>
+        <a href="token.html">token 计算</a>
         <a href="smsforward.html">SMSForward 对接</a>
+        <a href="index.html#tool">取码助手</a>
       </div>
     </div>
   </footer>
